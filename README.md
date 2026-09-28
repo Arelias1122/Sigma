@@ -15,6 +15,9 @@ Nur in der 3D-Version:
 - **Rechte Maustaste halten** (Handy: oben über den Bildschirm wischen) = Kamera drehen/umsehen. Beim Fahren schwenkt sie nach dem Loslassen zurück hinter den Roller.
 - Der **Lenker** dreht sich beim Lenken mit, Roller und Fahrer legen sich in die Kurve.
 - **Geld:** Streifenwagen zerstören (+$200 + $50 pro Stern), Hubschrauber (+$1.000), erfolgreiche Flucht (+$100 bis +$1.500 je nach Sternen). Festnahme kostet 25 % Kaution, WASTED $200 Krankenhausrechnung. Das Geld bleibt im Browser gespeichert.
+- **Ampeln** an allen Kreuzungen (16-Sekunden-Takt, abwechselnd für waagrechte und senkrechte Straßen).
+- **Passanten** laufen auf den Gehwegen um die Blöcke und überqueren die Straße über die Zebrastreifen – nur wenn die Autos Rot haben. Bei Schüssen rennen sie weg.
+- **Anfahren** mit dem Roller (oder durch Polizeiautos) → Ragdoll, nach 2 Sekunden stehen sie wieder auf. **Erschießen** kostet 50 $ pro Passant und gibt sofort einen Stern.
 - **3 Dealer** (grünes $ auf der Minikarte): Zu Fuß hingehen und E drücken → Munition für eine Waffe deiner Wahl nachfüllen, neue Waffen, Schutzweste und Erste Hilfe kaufen. Solange du gesucht wirst, handeln sie nicht.
 
 ## Starten

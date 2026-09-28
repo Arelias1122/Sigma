@@ -67,6 +67,8 @@
       <b>Handy:</b> Quer halten. Linker Daumen = fahren/laufen (der Roller fährt in die Stick-Richtung),
       rechter Daumen = zielen, weit ziehen = schießen. Oben über den Bildschirm wischen = umsehen.
       ⇅ auf-/absteigen, ⟳ Waffe wechseln, ■ Bremse.<br>
+      <b>Passanten</b> laufen auf den Gehwegen und gehen bei Rot über die Zebrastreifen. Anfahren wirft sie um (nach 2 s stehen sie wieder auf) –
+      wer einen Passanten erschießt, zahlt 50 $ und bekommt sofort einen Stern.<br>
       <b>Geld ($):</b> Für jeden zerstörten Streifenwagen und jede gelungene Flucht gibt es Geld.
       Drei <b>Dealer</b> (grünes $ auf der Minikarte) füllen dir dafür Munition auf – aber nur, wenn gerade keine Polizei hinter dir her ist.<br>
       <b>Fahndungslevel (★):</b> Streifenwagen tauchen ab und zu auf. Sehen sie dich auf dem Roller oder mit gezogener Waffe,
@@ -456,7 +458,7 @@ function respawn(where, fresh) {
   };
   if (fresh) player.hp = 100;
   scooter = { x: p.x, y: p.y + 4, angle: 0, speed: 0 };
-  cops = []; heli = null; bullets = [];
+  cops = []; heli = null; bullets = []; peds = [];
   stats = { time: 0, destroyed: 0, maxStars: 0 };
   wanted = 0; loseTimer = 0; seen = false; bustTimer = 0; gunfireHeat = 0;
   patrolTimer = 15; heliTimer = 0;
@@ -798,6 +800,7 @@ function fire(w) {
   shake = Math.max(shake, w.rocket ? 5 : w.pellets > 1 ? 4 : 1.5);
   // Verbrechen melden
   gunfireHeat += w.rocket ? 4 : w.pellets > 1 ? 1.5 : 0.7;
+  pedPanic(player.x, player.y, 520);
   if (wanted === 0) {
     const copNear = cops.some(c => !c.dead && dist(c, player) < 750);
     if (copNear) setWanted(1, 'Schüsse gehört – die Polizei kommt!');
@@ -1053,6 +1056,15 @@ function explosion(x, y, r, dmg, src) {
     }
   }
   if (heli && Math.hypot(heli.x - x, heli.y - y) < r + 20 && src === 'p') heli.hp -= dmg * 0.8;
+  for (const p of peds) {
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d >= r || p.state === 'dead') continue;
+    const f = 1 - d / r, nx = (p.x - x) / (d || 1), ny = (p.y - y) / (d || 1);
+    p.hp -= dmg * f;
+    if (p.hp <= 0) killPed(p, src === 'p', nx * 400 * f, ny * 400 * f);
+    else knockPed(p, nx * 400 * f, ny * 400 * f, 500 * f);
+  }
+  pedPanic(x, y, 600);
   if (dP < r) {
     damagePlayer(dmg * (1 - dP / r) * 0.6);
     if (dP < r * 0.7) knockOff('Von der Explosion umgehauen!');
@@ -1079,6 +1091,16 @@ function updateBullets(dt) {
           copAttacked();
           for (let i = 0; i < 3; i++) particles.push({ x: b.x, y: b.y, vx: rand(-120, 120), vy: rand(-120, 120), life: 0.2, max: 0.2, size: 2, color: '#fff', type: 'dot' });
           if (c.hp <= 0) destroyCop(c);
+          break;
+        }
+        if (!b.dead) for (const p of peds) {
+          if (p.state === 'dead' || Math.hypot(p.x - b.x, p.y - b.y) > 10) continue;
+          b.dead = true;
+          if (b.rocket) { explosion(b.x, b.y, 120, b.dmg, 'p'); break; }
+          p.hp -= b.dmg;
+          for (let i = 0; i < 4; i++) particles.push({ x: b.x, y: b.y, vx: rand(-80, 80), vy: rand(-80, 80), life: 0.4, max: 0.4, size: rand(2, 3), color: '#9e0f22', type: 'dot' });
+          if (p.hp <= 0) killPed(p, true, b.vx * 0.08, b.vy * 0.08);
+          else if (p.state !== 'ragdoll') { p.state = 'flee'; p.t = 5; }
           break;
         }
         if (!b.dead && heli && Math.hypot(heli.x - b.x, heli.y - b.y) < 34) {
@@ -1143,6 +1165,185 @@ function updatePickups(dt) {
     p.taken = true; p.respawn = 45;
     Snd.pickup();
   }
+}
+
+// ====================================================================
+//  Ampeln & Passanten
+// ====================================================================
+// Jede Kreuzung (ix, iy) schaltet im 16-s-Takt: waagrechte Straße (ew) grün → gelb → rot, dann die senkrechte (ns).
+const LIGHT_CYCLE = 16;
+function lightPhase(ix, iy) {
+  const t = (time + ((ix + iy) % 2) * 8) % LIGHT_CYCLE;
+  if (t < 7) return { ew: 'g', ns: 'r' };
+  if (t < 8) return { ew: 'y', ns: 'r' };
+  if (t < 15) return { ew: 'r', ns: 'g' };
+  return { ew: 'r', ns: 'y' };
+}
+// Gehweg-Ecken eines Blocks: 0 = NW, 1 = NO, 2 = SO, 3 = SW
+const CORNER_OFF = [[2.5, 2.5], [9.5, 2.5], [9.5, 9.5], [2.5, 9.5]];
+// Mögliche Überquerungen je Ecke: [Block-dx, Block-dy, Zielecke, überquerte Straße, Kreuzung-dx, Kreuzung-dy]
+const CROSSINGS = [
+  [[0, -1, 3, 'ew', 0, 0], [-1, 0, 1, 'ns', 0, 0]],
+  [[0, -1, 2, 'ew', 1, 0], [1, 0, 0, 'ns', 1, 0]],
+  [[0, 1, 1, 'ew', 1, 1], [1, 0, 3, 'ns', 1, 1]],
+  [[0, 1, 0, 'ew', 0, 1], [-1, 0, 2, 'ns', 0, 1]],
+];
+const inBlocks = (bx, by) => bx >= 0 && by >= 0 && bx < BLOCKS && by < BLOCKS;
+const PED_LOOKS = {
+  shirt: [0x3b6fb6, 0xc0392b, 0x2e8b57, 0xe6c229, 0x8e44ad, 0xecf0f1, 0x34495e, 0xd35400, 0x16a085, 0xf06292],
+  pants: [0x2c3e50, 0x1b1d22, 0x5d4037, 0x37474f, 0x283593, 0x6d6d6d],
+  hair: [0x2b1d14, 0x5b3a1e, 0xd9b36c, 0x111111, 0x8d8d8d, 0xa0522d],
+  skin: [0xc58c63, 0xf1c9a5, 0x8d5a3b, 0xe0ac86, 0x5c3a24],
+};
+const pick = a => a[Math.floor(Math.random() * a.length)];
+let peds = [];
+
+function pedTarget(p) {
+  p.tx = (p.bx * 10 + CORNER_OFF[p.c][0]) * TILE + p.off;
+  p.ty = (p.by * 10 + CORNER_OFF[p.c][1]) * TILE + p.off;
+}
+function spawnPed(anywhere) {
+  const pbx = clamp(Math.floor(player.x / TILE / 10), 0, BLOCKS - 1), pby = clamp(Math.floor(player.y / TILE / 10), 0, BLOCKS - 1);
+  for (let i = 0; i < 25; i++) {
+    const bx = clamp(pbx + Math.floor(rand(-2, 3)), 0, BLOCKS - 1), by = clamp(pby + Math.floor(rand(-2, 3)), 0, BLOCKS - 1);
+    const c = Math.floor(Math.random() * 4), dir = Math.random() < 0.5 ? 1 : -1, off = rand(-16, 16), f = Math.random();
+    const c2 = (c + dir + 4) % 4;
+    const x = lerp((bx * 10 + CORNER_OFF[c][0]) * TILE, (bx * 10 + CORNER_OFF[c2][0]) * TILE, f) + off;
+    const y = lerp((by * 10 + CORNER_OFF[c][1]) * TILE, (by * 10 + CORNER_OFF[c2][1]) * TILE, f) + off;
+    const d = Math.hypot(x - player.x, y - player.y);
+    if (d > 1150 || d < (anywhere ? 60 : 500) || (!anywhere && onScreen(x, y, 30))) continue;
+    const p = {
+      x, y, bx, by, c: c2, dir, off, speed: rand(38, 58), state: 'walk', hp: 40, angle: 0, walkT: Math.random() * 10,
+      h: 0, vz: 0, vx: 0, vy: 0, tumble: 0, fall: 1, t: 0, cross: null, justCrossed: false,
+      look: { shirt: pick(PED_LOOKS.shirt), pants: pick(PED_LOOKS.pants), hair: pick(PED_LOOKS.hair), skin: pick(PED_LOOKS.skin), size: rand(0.9, 1.08) },
+    };
+    pedTarget(p);
+    peds.push(p);
+    return;
+  }
+}
+function pedRejoin(p) {
+  p.bx = clamp(Math.floor(p.x / TILE / 10), 0, BLOCKS - 1); p.by = clamp(Math.floor(p.y / TILE / 10), 0, BLOCKS - 1);
+  let best = 0, bd = 1e9;
+  for (let c = 0; c < 4; c++) {
+    const d = Math.hypot((p.bx * 10 + CORNER_OFF[c][0]) * TILE - p.x, (p.by * 10 + CORNER_OFF[c][1]) * TILE - p.y);
+    if (d < bd) { bd = d; best = c; }
+  }
+  p.c = best; p.state = 'walk'; p.cross = null;
+  pedTarget(p);
+}
+function pedPanic(x, y, r) {
+  for (const p of peds) if (p.hp > 0 && (p.state === 'walk' || p.state === 'wait' || p.state === 'cross') && Math.hypot(p.x - x, p.y - y) < r) {
+    p.state = 'flee'; p.t = rand(3, 5.5);
+  }
+}
+function knockPed(p, vx, vy, power) {
+  p.state = p.hp > 0 ? 'ragdoll' : 'dead';
+  p.t = p.hp > 0 ? 2 : 14;
+  p.vx = vx; p.vy = vy; p.vz = 90 + Math.min(power, 450) * 0.45;
+  p.spin = rand(7, 12) * (Math.random() < 0.5 ? 1 : -1);
+  p.fall = Math.random() < 0.5 ? 1 : -1;
+  p.airborne = true;
+}
+function killPed(p, byPlayer, vx = 0, vy = 0) {
+  if (p.hp <= 0 && p.state === 'dead') return;
+  p.hp = 0;
+  knockPed(p, vx, vy, 120);
+  for (let i = 0; i < 10; i++) particles.push({ x: p.x, y: p.y, vx: rand(-90, 90), vy: rand(-90, 90), life: 0.6, max: 0.6, size: rand(2, 4), color: '#9e0f22', type: 'dot' });
+  pedPanic(p.x, p.y, 450);
+  if (byPlayer) {
+    addMoney(-50, p.x, p.y);
+    if (wanted < 1) setWanted(1, 'Passant erschossen! −$50');
+    else { setWanted(wanted); toast('Passant erschossen! −$50', '#ff6b6b'); }
+  }
+}
+
+function updatePeds(dt) {
+  const maxPeds = LOW_GFX ? 16 : 30;
+  if (peds.length < maxPeds) spawnPed(peds.length < maxPeds * 0.6 && time < 3);
+  for (const p of peds) {
+    // Angefahren werden: Roller oder Polizeiwagen
+    if (p.state !== 'ragdoll' && p.state !== 'dead' && p.state !== 'getup') {
+      if (player.onScooter && Math.abs(scooter.speed) > 70 && Math.hypot(p.x - scooter.x, p.y - scooter.y) < 17) {
+        const sp = scooter.speed;
+        knockPed(p, Math.cos(scooter.angle) * sp * 0.9 + rand(-40, 40), Math.sin(scooter.angle) * sp * 0.9 + rand(-40, 40), Math.abs(sp));
+        scooter.speed *= 0.75; Snd.hit(); shake = Math.max(shake, 3);
+        pedPanic(p.x, p.y, 250);
+      } else for (const c of cops) {
+        if (!c.dead && Math.abs(c.speed) > 60 && carHit(c, p.x, p.y, 6)) {
+          knockPed(p, Math.cos(c.angle) * c.speed, Math.sin(c.angle) * c.speed, Math.abs(c.speed));
+          break;
+        }
+      }
+      if (!player.onScooter) {
+        const d = Math.hypot(p.x - player.x, p.y - player.y);
+        if (d < 16 && d > 0.1) moveEntity(p, (p.x - player.x) / d * (16 - d), (p.y - player.y) / d * (16 - d), 6);
+      }
+    }
+    switch (p.state) {
+      case 'walk': case 'cross': {
+        const dx = p.tx - p.x, dy = p.ty - p.y, d = Math.hypot(dx, dy);
+        const sp = p.speed * (p.state === 'cross' ? 1.35 : 1);
+        if (d < 3) {
+          if (p.state === 'cross') { p.state = 'walk'; p.justCrossed = true; }
+          const opts = p.justCrossed ? [] : CROSSINGS[p.c].filter(o => inBlocks(p.bx + o[0], p.by + o[1]));
+          p.justCrossed = false;
+          if (opts.length && Math.random() < 0.5) { p.cross = pick(opts); p.state = 'wait'; p.t = 0; }
+          else { p.c = (p.c + p.dir + 4) % 4; pedTarget(p); }
+        } else {
+          p.x += dx / d * sp * dt; p.y += dy / d * sp * dt;
+          p.angle = Math.atan2(dy, dx); p.walkT += sp * dt * 0.13;
+        }
+        break;
+      }
+      case 'wait': {
+        const o = p.cross, L = lightPhase(p.bx + o[4], p.by + o[5]);
+        p.t += dt;
+        p.angle += angDiff(p.angle, o[3] === 'ew' ? (o[1] < 0 ? -Math.PI / 2 : Math.PI / 2) : (o[0] < 0 ? Math.PI : 0)) * Math.min(1, dt * 5);
+        if (L[o[3]] === 'r') { p.bx += o[0]; p.by += o[1]; p.c = o[2]; p.state = 'cross'; pedTarget(p); }
+        else if (p.t > 25) { p.state = 'walk'; p.c = (p.c + p.dir + 4) % 4; pedTarget(p); }
+        break;
+      }
+      case 'flee': {
+        const a = Math.atan2(p.y - player.y, p.x - player.x);
+        p.angle += angDiff(p.angle, a) * Math.min(1, dt * 6);
+        moveEntity(p, Math.cos(p.angle) * 135 * dt, Math.sin(p.angle) * 135 * dt, 6);
+        p.walkT += 135 * dt * 0.13;
+        if ((p.t -= dt) <= 0) pedRejoin(p);
+        break;
+      }
+      case 'ragdoll': case 'dead': {
+        if (p.airborne) {
+          p.vz -= 650 * dt; p.h += p.vz * dt;
+          p.tumble += p.spin * dt;
+          if (p.h <= 0) {
+            p.h = 0;
+            if (p.vz < -120) { p.vz = -p.vz * 0.3; p.spin *= 0.5; }
+            else { p.vz = 0; p.airborne = false; p.fall = Math.cos(p.tumble) > 0 ? Math.sign(Math.sin(p.tumble) || 1) : -Math.sign(Math.sin(p.tumble) || 1); }
+          }
+        } else {
+          // am Boden liegen bleiben
+          const lie = p.fall * Math.PI / 2, base = Math.round((p.tumble - lie) / TAU) * TAU;
+          p.tumble += (base + lie - p.tumble) * Math.min(1, dt * 10);
+        }
+        const fr = p.airborne ? 0.6 : 0.01;
+        p.vx *= Math.pow(fr, dt); p.vy *= Math.pow(fr, dt);
+        if (moveEntity(p, p.vx * dt, p.vy * dt, 6)) { p.vx *= -0.3; p.vy *= -0.3; }
+        p.t -= dt;
+        if (p.state === 'ragdoll' && p.t <= 0 && !p.airborne) { p.state = 'getup'; p.t = 0.6; p.tumble = ((p.tumble % TAU) + TAU + Math.PI) % TAU - Math.PI; }
+        break;
+      }
+      case 'getup': {
+        p.tumble *= Math.pow(0.0005, dt);
+        if ((p.t -= dt) <= 0) { p.tumble = 0; pedRejoin(p); }
+        break;
+      }
+    }
+  }
+  peds = peds.filter(p => {
+    if (p.state === 'dead') return p.t > 0;
+    return Math.hypot(p.x - player.x, p.y - player.y) < 1450 || onScreen(p.x, p.y, 20);
+  });
 }
 
 // ====================================================================
@@ -1243,6 +1444,7 @@ function update(dt) {
   if (wanted > 0) stats.time += dt;
   updatePlayer(dt);
   updateCops(dt);
+  updatePeds(dt);
   updateHeli(dt);
   updateBullets(dt);
   updatePickups(dt);
@@ -2064,6 +2266,97 @@ function onScreen(x, y, m) {
 // Bildschirmrichtung (Stick) → Weltwinkel relativ zur Kamera
 function screenToWorldAngle(a) { return a + Math.PI / 2 + camYaw + lookYaw; }
 
+
+// ---------- Ampeln ----------
+const lightSets = [];
+(function buildTrafficLights() {
+  const poleGeo = new THREE.CylinderGeometry(1.3, 1.6, 50, 6), headGeo = new THREE.BoxGeometry(5, 16, 7), lampGeo = new THREE.BoxGeometry(1.2, 3.8, 3.8);
+  const dark = mat(0x23262b);
+  for (let iy = 0; iy <= BLOCKS; iy++) for (let ix = 0; ix <= BLOCKS; ix++) {
+    const set = { ix, iy, x: (ix * 10 + 1) * TILE, y: (iy * 10 + 1) * TILE, group: new THREE.Group(), ew: {}, ns: {} };
+    for (const k of ['ew', 'ns']) for (const c of ['r', 'y', 'g']) set[k][c] = new THREE.MeshBasicMaterial({ color: 0x222222 });
+    // zwei Masten an diagonalen Ecken der Kreuzung
+    const corners = [[(ix * 10 + 2) * TILE + 10, (iy * 10 + 2) * TILE + 10, 1], [(ix * 10) * TILE - 10, (iy * 10) * TILE - 10, -1]];
+    for (const [px, pz, sgn] of corners) {
+      if (tileAtPx(px, pz) !== WALK) continue;
+      const pole = new THREE.Mesh(poleGeo, dark); pole.position.set(px, 25 + CURB, pz); pole.castShadow = !LOW_GFX; set.group.add(pole);
+      // Kopf für die waagrechte Straße (zeigt in x-Richtung) und für die senkrechte (z-Richtung)
+      for (const k of ['ew', 'ns']) {
+        const head = new THREE.Group();
+        head.position.set(px, 50 + CURB, pz);
+        head.rotation.y = k === 'ew' ? (sgn > 0 ? 0 : Math.PI) : (sgn > 0 ? -Math.PI / 2 : Math.PI / 2);
+        head.add(new THREE.Mesh(headGeo, dark));
+        ['r', 'y', 'g'].forEach((c, i) => { const l = new THREE.Mesh(lampGeo, set[k][c]); l.position.set(2.8, 5 - i * 5, 0); head.add(l); });
+        set.group.add(head);
+      }
+    }
+    scene.add(set.group);
+    lightSets.push(set);
+  }
+})();
+const LAMP_ON = { r: 0xff2d2d, y: 0xffc21f, g: 0x2dff74 }, LAMP_OFF = { r: 0x3a0d0d, y: 0x3a300c, g: 0x0c3a1a };
+function syncLights() {
+  for (const s of lightSets) {
+    const vis = Math.hypot(s.x - cam.x, s.y - cam.y) < (LOW_GFX ? 950 : 1500);
+    s.group.visible = vis;
+    if (!vis) continue;
+    const L = lightPhase(s.ix, s.iy);
+    for (const k of ['ew', 'ns']) for (const c of ['r', 'y', 'g']) s[k][c].color.setHex(L[k] === c ? LAMP_ON[c] : LAMP_OFF[c]);
+  }
+}
+
+// ---------- Passanten ----------
+const pedMeshes = new Map();
+const pedLegGeo = new THREE.BoxGeometry(4.5, 16, 4.5), pedTorsoGeo = new THREE.BoxGeometry(8, 17, 12.5), pedArmGeo = new THREE.BoxGeometry(13, 3.4, 3.4);
+const pedHeadGeo = new THREE.SphereGeometry(5.3, 10, 8), pedHairGeo = new THREE.SphereGeometry(5.7, 10, 6);
+const bloodGeo = new THREE.CircleGeometry(14, 16); bloodGeo.rotateX(-Math.PI / 2);
+const bloodMat = new THREE.MeshBasicMaterial({ color: 0x5e0a14, transparent: true, opacity: 0.85 });
+function makePed(look) {
+  const g = new THREE.Group(), body = new THREE.Group();
+  g.add(body); g.rotation.order = 'YXZ';
+  const shirt = mat(look.shirt), pants = mat(look.pants), skin = mat(look.skin);
+  const limb = (geo, m, px, py, pz, ox, oy) => { const piv = new THREE.Group(); piv.position.set(px, py, pz); const mm = new THREE.Mesh(geo, m); mm.position.set(ox, oy, 0); mm.castShadow = !LOW_GFX; piv.add(mm); body.add(piv); return piv; };
+  const legL = limb(pedLegGeo, pants, 0, 16, -3, 0, -8), legR = limb(pedLegGeo, pants, 0, 16, 3, 0, -8);
+  const torso = new THREE.Mesh(pedTorsoGeo, shirt); torso.position.y = 24.5; torso.castShadow = !LOW_GFX; body.add(torso);
+  const head = new THREE.Mesh(pedHeadGeo, skin); head.position.set(0.5, 38, 0); body.add(head);
+  const hair = new THREE.Mesh(pedHairGeo, mat(look.hair)); hair.scale.set(1, 0.62, 1); hair.position.set(-1, 40.3, 0); body.add(hair);
+  const armL = limb(pedArmGeo, shirt, 0, 30, -7.5, 0, -6.5), armR = limb(pedArmGeo, shirt, 0, 30, 7.5, 0, -6.5);
+  armL.children[0].rotation.z = armR.children[0].rotation.z = Math.PI / 2;
+  g.scale.setScalar(look.size);
+  Object.assign(g.userData, { legL, legR, armL, armR, body });
+  scene.add(g);
+  return g;
+}
+function syncPeds() {
+  const alive = new Set(peds);
+  for (const p of peds) {
+    let g = pedMeshes.get(p);
+    if (!g) { g = makePed(p.look); pedMeshes.set(p, g); }
+    const u = g.userData;
+    const vis = Math.hypot(p.x - cam.x, p.y - cam.y) < 1400;
+    g.visible = vis;
+    if (!vis) continue;
+    const down = p.state === 'ragdoll' || p.state === 'dead' || p.state === 'getup';
+    g.position.set(p.x, groundH(p.x, p.y) + p.h + (down ? Math.abs(Math.sin(p.tumble)) * 4 : 0), p.y);
+    g.rotation.set(0, -p.angle, p.tumble);
+    if (down) {
+      const fl = p.airborne ? Math.sin(time * 22 + p.off) : 0;
+      u.legL.rotation.z = 0.5 * fl; u.legR.rotation.z = -0.5 * fl + (p.airborne ? 0 : 0.25);
+      u.armL.rotation.set(1.2 + fl * 0.8, 0, 0); u.armR.rotation.set(-1.2 - fl * 0.8, 0, 0);
+    } else {
+      const moving = p.state !== 'wait', sw = moving ? Math.sin(p.walkT) * (p.state === 'flee' ? 0.9 : 0.55) : 0;
+      u.legL.rotation.z = sw; u.legR.rotation.z = -sw;
+      u.armL.rotation.set(0, 0, -sw * 0.8); u.armR.rotation.set(0, 0, sw * 0.8);
+      if (p.state === 'flee') { u.armL.rotation.x = 0.4; u.armR.rotation.x = -0.4; }
+    }
+    if (p.state === 'dead' && !u.blood && !p.airborne) {
+      u.blood = new THREE.Mesh(bloodGeo, bloodMat); u.blood.position.set(p.x, groundH(p.x, p.y) + 0.3, p.y); scene.add(u.blood);
+    }
+    if (u.blood) u.blood.scale.setScalar(Math.min(1, (14 - p.t) / 2));
+  }
+  for (const [p, g] of pedMeshes) if (!alive.has(p)) { scene.remove(g); if (g.userData.blood) scene.remove(g.userData.blood); pedMeshes.delete(p); }
+}
+
 // ---------- Kamera ----------
 let camDist = 170, camHeight = 105;
 function updateCamera(dt) {
@@ -2186,6 +2479,9 @@ function render3D(dt) {
     u.body.color.setHex(0xeef1f5).lerp(col3('#2a2a2a'), clamp(1 - c.hp / 70, 0, 0.8));
   }
   for (const [c, g] of copMeshes) if (!seenCops.has(c)) { scene.remove(g); copMeshes.delete(c); }
+
+  syncLights();
+  syncPeds();
 
   // Wracks
   const seenW = new Set(wrecks);
