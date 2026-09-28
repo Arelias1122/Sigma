@@ -69,7 +69,7 @@
       rechter Daumen = zielen, weit ziehen = schießen. Oben über den Bildschirm wischen = umsehen.
       ⇅ auf-/absteigen, ⟳ Waffe wechseln, ■ Bremse.<br>
       <b>Werkstätten (W auf der Karte):</b> Mit F das Tor öffnen (nicht mit Sternen!), mit dem Roller reinfahren und tunen:
-      3 Upgrades, jedes macht den Roller 1,5× schneller. Danach gibt es im <b>Autohaus</b> (A) das E-Moped für 5.000 $.<br>
+      3 Upgrades machen den Roller schneller (bis 50 km/h). Danach gibt es im <b>Autohaus</b> (A) das E-Moped für 5.000 $.<br>
       <b>Passanten</b> laufen auf den Gehwegen und gehen bei Rot über die Zebrastreifen. Anfahren wirft sie um (nach 2 s stehen sie wieder auf) –
       wer einen Passanten erschießt, zahlt 50 $ und bekommt sofort einen Stern.<br>
       <b>Geld ($):</b> Für jeden zerstörten Streifenwagen und jede gelungene Flucht gibt es Geld.
@@ -1387,8 +1387,9 @@ try {
   if (localStorage.getItem('escooter3d.vehicle') === 'moped') vehicle = 'moped';
 } catch (e) {}
 function saveGarage() { try { localStorage.setItem('escooter3d.upgrades', String(upgrades)); localStorage.setItem('escooter3d.vehicle', vehicle); } catch (e) {} }
-// Jedes Upgrade macht den Roller 1,5× schneller; das E-Moped legt noch einmal 1,3× drauf
-function speedMult() { return vehicle === 'moped' ? Math.pow(1.5, 3) * 1.3 : Math.pow(1.5, upgrades); }
+// Tempo-Faktor je Tuning-Stufe (Grundtempo 39 km/h): 39 → 43 → 47 → 50 km/h; das E-Moped fährt 70 km/h
+const SCOOTER_MULT = [1, 43 / 39, 47 / 39, 50 / 39], MOPED_MULT = 70 / 39;
+function speedMult() { return vehicle === 'moped' ? MOPED_MULT : SCOOTER_MULT[upgrades]; }
 const vehicleName = () => vehicle === 'moped' ? 'E-Moped' : 'Roller';
 
 // Die Werkstatt hat eine Einfahrt (2 × 3 Kacheln) an der Südseite; bei geschlossenem Tor ist sie Wand
@@ -1458,11 +1459,11 @@ function renderMenu() {
       sub.textContent = 'Dein E-Moped ist schon voll ausgestattet.';
       html = `<div class="item"><div><b>E-Moped</b><small>Höchstgeschwindigkeit ${kmh(speedMult())} km/h</small></div><button disabled>Fertig getunt</button></div>`;
     } else {
-      sub.textContent = `Dein Roller: ${kmh(speedMult())} km/h Spitze. Jedes Upgrade macht ihn 1,5× schneller.`;
+      sub.textContent = `Dein Roller: ${kmh(speedMult())} km/h Spitze. Voll getunt fährt er 50 km/h.`;
       UPGRADES.forEach((u, i) => {
         const done = i < upgrades, next = i === upgrades;
         const label = done ? 'Eingebaut ✓' : next ? `Einbauen · ${fmtMoney(u.price)}` : `Erst Stufe ${i}`;
-        html += `<div class="item${next ? ' cur' : ''}"><div><b>Stufe ${i + 1}: ${u.name}</b><small>${u.desc} · ×1,5 → ${kmh(Math.pow(1.5, i + 1))} km/h</small></div>
+        html += `<div class="item${next ? ' cur' : ''}"><div><b>Stufe ${i + 1}: ${u.name}</b><small>${u.desc} · → ${kmh(SCOOTER_MULT[i + 1])} km/h</small></div>
           <button class="${next ? 'buy' : ''}" data-buy="upg" ${!next || money < u.price ? 'disabled' : ''}>${label}</button></div>`;
       });
       if (upgrades >= 3) html += `<div class="item"><div><b>Voll getunt!</b><small>Im Autohaus (A auf der Karte) wartet jetzt das E-Moped.</small></div><button disabled>${fmtMoney(MOPED_PRICE)}</button></div>`;
@@ -1474,7 +1475,7 @@ function renderMenu() {
     title.textContent = 'AUTOHAUS';
     sub.textContent = 'E-Moped: schneller als jeder getunte Roller, stabiler bei Crashs und Rammstößen.';
     const owned = vehicle === 'moped', ready = upgrades >= 3;
-    const info = owned ? 'Gehört dir schon' : ready ? `Spitze ${kmh(Math.pow(1.5, 3) * 1.3)} km/h` : `Erst alle 3 Upgrades in der Werkstatt (${upgrades}/3)`;
+    const info = owned ? 'Gehört dir schon' : ready ? `Spitze ${kmh(MOPED_MULT)} km/h` : `Erst alle 3 Upgrades in der Werkstatt (${upgrades}/3)`;
     shopList.innerHTML = `<div class="item${ready && !owned ? ' cur' : ''}"><div><b>E-Moped</b><small>${info}</small></div>
       <button class="buy" data-buy="moped" ${owned || !ready || money < MOPED_PRICE ? 'disabled' : ''}>${owned ? 'Gekauft ✓' : 'Kaufen · ' + fmtMoney(MOPED_PRICE)}</button></div>`;
     return;
