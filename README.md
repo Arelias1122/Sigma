@@ -4,6 +4,13 @@ Ein kleines Top-Down-Actionspiel im Browser (HTML5 Canvas, keine Abhängigkeiten
 Du fährst mit einem E-Scooter durch eine Stadt, Polizeistreifen tauchen auf und verfolgen dich –
 mit einem Fahndungslevel-System (1–5 Sterne) wie in GTA 5.
 
+## Versionen
+
+- `index.html` – 2D-Version (Draufsicht, läuft komplett offline)
+- `3d.html` – 3D-Version mit three.js (Kamera hinter dem Roller, Häuser mit Höhe, 3D-Polizeiautos und Hubschrauber mit Suchscheinwerfer). Braucht beim Laden Internet, weil three.js vom CDN kommt.
+
+In der 3D-Version bewegst du dich zu Fuß relativ zur Kamera; die Kamera dreht sich mit, während du Roller fährst.
+
 ## Starten
 
 `index.html` einfach im Browser öffnen (Doppelklick reicht) – oder lokal ausliefern:
