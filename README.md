@@ -11,6 +11,12 @@ mit einem Fahndungslevel-System (1–5 Sterne) wie in GTA 5.
 
 In der 3D-Version bewegst du dich zu Fuß relativ zur Kamera; die Kamera dreht sich mit, während du Roller fährst.
 
+Nur in der 3D-Version:
+- **Rechte Maustaste halten** (Handy: oben über den Bildschirm wischen) = Kamera drehen/umsehen. Beim Fahren schwenkt sie nach dem Loslassen zurück hinter den Roller.
+- Der **Lenker** dreht sich beim Lenken mit, Roller und Fahrer legen sich in die Kurve.
+- **Geld:** Streifenwagen zerstören (+$200 + $50 pro Stern), Hubschrauber (+$1.000), erfolgreiche Flucht (+$100 bis +$1.500 je nach Sternen). Festnahme kostet 25 % Kaution, WASTED $200 Krankenhausrechnung. Das Geld bleibt im Browser gespeichert.
+- **3 Dealer** (grünes $ auf der Minikarte): Zu Fuß hingehen und E drücken → Munition für eine Waffe deiner Wahl nachfüllen, neue Waffen, Schutzweste und Erste Hilfe kaufen. Solange du gesucht wirst, handeln sie nicht.
+
 ## Starten
 
 `index.html` einfach im Browser öffnen (Doppelklick reicht) – oder lokal ausliefern:
