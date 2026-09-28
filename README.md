@@ -1,0 +1,47 @@
+# E-Scooter Chase
+
+Ein kleines Top-Down-Actionspiel im Browser (HTML5 Canvas, keine Abhängigkeiten).
+Du fährst mit einem E-Scooter durch eine Stadt, Polizeistreifen tauchen auf und verfolgen dich –
+mit einem Fahndungslevel-System (1–5 Sterne) wie in GTA 5.
+
+## Starten
+
+`index.html` einfach im Browser öffnen (Doppelklick reicht) – oder lokal ausliefern:
+
+```bash
+python3 -m http.server 8000   # dann http://localhost:8000 öffnen
+```
+
+## Steuerung
+
+| Taste | Aktion |
+|---|---|
+| W / ↑ | Gas geben (Roller) / nach oben laufen |
+| S / ↓ | Bremsen, rückwärts / nach unten laufen |
+| A D / ← → | Lenken / seitlich laufen |
+| Leertaste | Vollbremsung |
+| E | Auf den Roller auf- / absteigen |
+| Maus | Zielen |
+| Linke Maustaste | Schießen – zu Fuß **und** auf dem Roller |
+| 1–6, Mausrad, Q | Waffe wechseln |
+| P / Esc | Pause |
+| M | Ton an/aus |
+
+## Spielmechanik
+
+- **Streifenwagen** spawnen ab und zu in der Nähe. Sehen sie dich auf dem Roller oder mit gezogener Waffe,
+  bekommst du ★ und sie verfolgen dich.
+- **Fahndungslevel ★–★★★★★**
+  - ★ Schüsse in Hörweite der Polizei / Anwohner rufen die Polizei / auf dem Roller erwischt
+  - ★★ Polizei angegriffen – ab jetzt wird zurückgeschossen
+  - ★★★+ jeder zerstörte Streifenwagen erhöht das Level
+  - ★★★★ Polizeihubschrauber mit Suchscheinwerfer
+  - Mehr Sterne = mehr und schnellere Polizeiautos
+- **Entkommen:** Sichtkontakt brechen (Gebäude dazwischen) und den Suchradius verlassen
+  (Kreis auf der Minikarte). Blinkende Sterne = die Polizei sucht dich nur noch.
+- **Waffen** (Pistole, Uzi, Schrotflinte, Sturmgewehr, Raketenwerfer) sowie Gesundheit und
+  Schutzwesten liegen verteilt auf Gehwegen und in Parks. Aufheben geht nur zu Fuß – also absteigen!
+- **Rammen:** Polizeiautos können dich vom Roller stoßen.
+- **BUSTED:** Bleibst du bei bis zu 3 Sternen stehen, während ein Polizist neben dir hält,
+  wirst du festgenommen (Waffen weg, Neustart an der Polizeiwache).
+- **WASTED:** Gesundheit auf 0 → Neustart am Krankenhaus.
