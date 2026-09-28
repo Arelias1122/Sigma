@@ -60,14 +60,16 @@
       <tr><td>Maus</td><td>Zielen (auf den Boden zeigen)</td></tr>
       <tr><td>Rechte Maustaste halten</td><td>Kamera drehen / umsehen</td></tr>
       <tr><td>Linke Maustaste</td><td>Schießen (zu Fuß <i>und</i> auf dem Roller)</td></tr>
-      <tr><td>1–6 / Mausrad / Q</td><td>Waffe wechseln</td></tr>
+      <tr><td>Q</td><td>Auf dem Roller: Gang wechseln · zu Fuß: Waffe wechseln</td></tr>
+      <tr><td>1–6 / Mausrad</td><td>Waffe wechseln</td></tr>
       <tr><td>Leertaste</td><td>Vollbremsung</td></tr>
       <tr><td>P / Esc &nbsp; M</td><td>Pause &nbsp;·&nbsp; Ton an/aus</td></tr>
     </table>
     <div class="tip">
       <b>Handy:</b> Quer halten. Linker Daumen = fahren/laufen (der Roller fährt in die Stick-Richtung),
       rechter Daumen = zielen, weit ziehen = schießen. Oben über den Bildschirm wischen = umsehen.
-      ⇅ auf-/absteigen, ⟳ Waffe wechseln, ■ Bremse.<br>
+      ⇅ auf-/absteigen, ⟳ Waffe wechseln, ■ Bremse, Zahl über der Bremse = Gang wechseln.<br>
+      <b>Gänge:</b> Der Roller hat 3 Gänge, das E-Moped 4. Im 1. Gang zieht er am stärksten, ist aber langsam – für die Höchstgeschwindigkeit musst du hochschalten.<br>
       <b>Werkstätten (W auf der Karte):</b> Mit F das Tor öffnen (nicht mit Sternen!), mit dem Roller reinfahren und tunen:
       3 Upgrades machen den Roller schneller (bis 50 km/h). Danach gibt es im <b>Autohaus</b> (A) das E-Moped für 5.000 $.<br>
       <b>Passanten</b> laufen auf den Gehwegen und gehen bei Rot über die Zebrastreifen. Anfahren wirft sie um (nach 2 s stehen sie wieder auf) –
@@ -350,6 +352,11 @@ const Snd = {
       o.connect(g); g.connect(this.master); o.start(t + i * 0.07); o.stop(t + i * 0.07 + 0.2);
     });
   },
+  shift() {
+    if (!this.ctx) return;
+    this.burst(2600, 0.05, 0.25, 'highpass');
+    this.thump(140, 0.08, 0.2);
+  },
   star() { this.thump(880, 0.25, 0.2); },
   update(dt) {
     if (!this.ctx) return;
@@ -365,7 +372,10 @@ const Snd = {
     // Elektromotor
     const sp = player && player.onScooter ? Math.abs(scooter.speed) : 0;
     this.motor.g.gain.setTargetAtTime(playing ? 0.012 + sp / 380 * 0.035 : 0, t, 0.05);
-    this.motor.o.frequency.setTargetAtTime(90 + sp * 1.6, t, 0.05);
+    // Motordrehzahl: steigt im Gang an und fällt nach dem Hochschalten wieder ab
+    const top = player && player.onScooter ? 390 * speedMult() * gearsOf()[curGear()][0] : 1;
+    const rpm = clamp(sp / top, 0, 1.1);
+    this.motor.o.frequency.setTargetAtTime(80 + rpm * 520 + (player ? curGear() : 0) * 25, t, 0.05);
     // Hubschrauber
     const hv = playing && heli ? clamp(1 - dist(heli, player) / 1400, 0, 1) * 0.12 : 0;
     this.rotor.g.gain.setTargetAtTime(hv, t, 0.1);
@@ -511,6 +521,7 @@ function touchButtons() {
     })[interactCtx()] || { label: '⇅', sub: player && player.onScooter ? 'Ab' : 'Auf' }),
     { id: 'TouchW', x: bx, y: H - 62, r: r * 0.85, label: '⟳', sub: 'Waffe' },
     { id: 'Brake', x: 100 + STICK_R + r + 20, y: H - 62, r: r * 0.85, label: '■', sub: 'Bremse' },
+    ...(player && player.onScooter ? [{ id: 'TouchG', x: 100 + STICK_R + r + 20, y: H - 150, r: r * 0.85, label: String(curGear() + 1), sub: 'Gang' }] : []),
     { id: 'KeyP', x: W / 2, y: 30, r: 20, label: 'II', sub: '' },
   ];
 }
@@ -725,7 +736,8 @@ function updatePlayer(dt) {
   if (player.onScooter) {
     const grass = tileAtPx(s.x, s.y) === PARK;
     const M = speedMult(), moped = vehicle === 'moped', sM = Math.sqrt(M);
-    const maxF = (grass ? 250 : 390) * M;
+    const [gTop, gAcc] = gearsOf()[curGear()];
+    const vMax = (grass ? 250 : 390) * M, maxF = vMax * gTop;
     let thr = up ? 1 : dn ? -1 : 0, steer = (rt ? 1 : 0) - (lf ? 1 : 0);
     if (mv.m > 0.15) {
       // Touch: Roller fährt in die Richtung, in die der Stick zeigt
@@ -734,10 +746,11 @@ function updatePlayer(dt) {
       thr = Math.abs(d) < 1.9 || s.speed < 60 ? mv.m : -1;
     }
     if (keys.Space || touch.brake) s.speed = approach(s.speed, 0, 900 * sM * dt);
-    else if (thr > 0) s.speed += 330 * Math.pow(M, 0.85) * (moped ? 1.2 : 1) * thr * dt;
+    else if (thr > 0 && s.speed < maxF) s.speed = Math.min(maxF, s.speed + 330 * Math.pow(M, 0.85) * (moped ? 1.2 : 1) * gAcc * thr * dt);
     else if (thr < 0) s.speed -= (s.speed > 0 ? 700 * sM : 240) * dt;
     else s.speed = approach(s.speed, 0, 150 * dt);
-    if (s.speed > maxF) s.speed = approach(s.speed, maxF, 600 * M * dt);
+    // Zu schnell für den Gang (z. B. nach dem Runterschalten): Motorbremse
+    if (s.speed > maxF) s.speed = approach(s.speed, maxF, (grass && s.speed > vMax ? 600 : 260) * M * dt);
     s.speed = Math.max(s.speed, -90);
     const sf = clamp(s.speed / 140, -1, 1);
     s.angle += steer * (moped ? 3.4 : 3.1) * (1 + 0.12 * (M - 1)) * dt * sf * (1 - Math.min(Math.abs(s.speed) / (1000 * M), 0.3));
@@ -791,7 +804,9 @@ function updatePlayer(dt) {
   for (let i = 0; i < WEAPON_ORDER.length; i++) {
     if (pressed['Digit' + (i + 1)] && player.ammo[WEAPON_ORDER[i]] !== undefined) player.weapon = WEAPON_ORDER[i];
   }
-  let cyc = wheel + (pressed.KeyQ || pressed.TouchW ? 1 : 0);
+  // Q: auf dem Roller Gang wechseln, zu Fuß Waffe wechseln
+  if ((pressed.KeyQ && player.onScooter) || pressed.TouchG) shiftGear();
+  let cyc = wheel + ((pressed.KeyQ && !player.onScooter) || pressed.TouchW ? 1 : 0);
   wheel = 0;
   if (cyc !== 0 && owned.length > 1) {
     const i = owned.indexOf(player.weapon);
@@ -1389,6 +1404,18 @@ try {
 function saveGarage() { try { localStorage.setItem('escooter3d.upgrades', String(upgrades)); localStorage.setItem('escooter3d.vehicle', vehicle); } catch (e) {} }
 // Tempo-Faktor je Tuning-Stufe (Grundtempo 39 km/h): 39 → 43 → 47 → 50 km/h; das E-Moped fährt 70 km/h
 const SCOOTER_MULT = [1, 43 / 39, 47 / 39, 50 / 39], MOPED_MULT = 70 / 39;
+// Gänge: [Anteil der Höchstgeschwindigkeit, Beschleunigung]. Roller 3 Gänge, E-Moped 4.
+const GEARS = {
+  scooter: [[0.45, 1.45], [0.75, 1.0], [1.0, 0.7]],
+  moped: [[0.35, 1.55], [0.6, 1.2], [0.82, 0.9], [1.0, 0.7]],
+};
+const gearsOf = () => GEARS[vehicle];
+const curGear = () => Math.min(scooter.gear || 0, gearsOf().length - 1);
+function shiftGear() {
+  const n = gearsOf().length;
+  scooter.gear = (curGear() + 1) % n;
+  Snd.shift();
+}
 function speedMult() { return vehicle === 'moped' ? MOPED_MULT : SCOOTER_MULT[upgrades]; }
 const vehicleName = () => vehicle === 'moped' ? 'E-Moped' : 'Roller';
 
@@ -1778,7 +1805,13 @@ function drawHUD() {
   // Tacho
   if (player.onScooter) {
     const ty = touchMode ? 6 : H - 70, tx = touchMode ? W / 2 + 150 : W;
-    ctx.fillStyle = 'rgba(0,0,0,.55)'; rrect(tx - 126, ty, 110, 54, 8); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,.55)'; rrect(tx - 186, ty, 170, 54, 8); ctx.fill();
+    // Gang-Anzeige
+    const gs = gearsOf(), g = curGear();
+    ctx.fillStyle = '#ffd166'; ctx.font = 'bold 26px Impact, Arial Black, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(g + 1), tx - 158, ty + 24);
+    ctx.font = '10px system-ui, sans-serif'; ctx.fillStyle = '#cfd6e0'; ctx.fillText(touchMode ? 'Gang' : 'Gang · Q', tx - 158, ty + 44);
+    for (let i = 0; i < gs.length; i++) { ctx.fillStyle = i <= g ? '#ffd166' : 'rgba(255,255,255,.2)'; ctx.fillRect(tx - 134 + i * 9, ty + 40, 6, 6); }
     ctx.fillStyle = '#3dd68c'; ctx.font = 'bold 28px Impact, Arial Black, sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     ctx.fillText(String(Math.round(Math.abs(scooter.speed) * 0.1)), tx - 58, ty + 28);
     ctx.fillStyle = '#cfd6e0'; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillText('km/h', tx - 54, ty + 30);
