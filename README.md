@@ -12,7 +12,15 @@ mit einem Fahndungslevel-System (1–5 Sterne) wie in GTA 5.
 python3 -m http.server 8000   # dann http://localhost:8000 öffnen
 ```
 
-## Steuerung
+## Handy / Tablet
+
+Das Spiel erkennt Touch automatisch. Handy quer halten:
+
+- **Linker Daumen:** Stick zum Fahren/Laufen (der Roller fährt in die Richtung, in die du ziehst)
+- **Rechter Daumen:** Stick zum Zielen – weit ziehen = schießen
+- **⇅** auf-/absteigen · **⟳** Waffe wechseln · **■** Bremse · **II** Pause
+
+## Steuerung (PC)
 
 | Taste | Aktion |
 |---|---|

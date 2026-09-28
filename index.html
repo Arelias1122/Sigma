@@ -7,7 +7,7 @@
 <style>
   html, body { margin: 0; height: 100%; background: #111; overflow: hidden; color: #fff;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  canvas { display: block; cursor: crosshair; }
+  canvas { display: block; cursor: crosshair; touch-action: none; -webkit-user-select: none; user-select: none; }
   #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
     background: radial-gradient(ellipse at center, rgba(10,20,40,.85), rgba(0,0,0,.95)); z-index: 10; padding: 16px; box-sizing: border-box; }
   .panel { max-width: 620px; width: 100%; background: rgba(20,24,32,.92); border: 1px solid #2c3444;
@@ -43,6 +43,8 @@
       <tr><td>P / Esc &nbsp; M</td><td>Pause &nbsp;·&nbsp; Ton an/aus</td></tr>
     </table>
     <div class="tip">
+      <b>Handy:</b> Quer halten. Linker Daumen = fahren/laufen (der Roller fährt in die Stick-Richtung),
+      rechter Daumen = zielen, weit ziehen = schießen. ⇅ auf-/absteigen, ⟳ Waffe wechseln, ■ Bremse.<br>
       <b>Fahndungslevel (★):</b> Streifenwagen tauchen ab und zu auf. Sehen sie dich auf dem Roller oder mit gezogener Waffe,
       bekommst du einen Stern. Schießen, Polizisten angreifen und Wagen zerstören erhöht das Level bis ★★★★★ –
       ab 2 Sternen wird zurückgeschossen, ab 4 Sternen kommt der Hubschrauber.<br>
@@ -76,7 +78,7 @@ function resize() {
   W = innerWidth; H = innerHeight;
   cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
   cv.style.width = W + 'px'; cv.style.height = H + 'px';
-  zoom = clamp(Math.min(W / 1150, H / 780), 0.55, 1.25);
+  zoom = clamp(Math.min(W / 1150, H / 780), W < 700 || H < 500 ? 0.42 : 0.55, 1.25);
 }
 addEventListener('resize', resize);
 resize();
@@ -421,12 +423,107 @@ addEventListener('mouseup', e => { if (e.button === 0) mouse.down = false; });
 cv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('wheel', e => { wheel += Math.sign(e.deltaY); e.preventDefault(); }, { passive: false });
 
+// Touch-Steuerung: linker Stick fahren/laufen, rechter Stick zielen + schießen, Tasten rechts
+let touchMode = matchMedia('(pointer: coarse)').matches;
+const touch = { move: null, aim: null, brake: false, brakeId: null };
+const STICK_R = 60;
+function touchButtons() {
+  const r = Math.max(28, Math.min(36, W * 0.045));
+  const bx = W - 110 - STICK_R - r - 20;
+  return [
+    { id: 'TouchE', x: bx, y: H - 150, r, label: '⇅', sub: player && player.onScooter ? 'Ab' : 'Auf' },
+    { id: 'TouchW', x: bx, y: H - 62, r: r * 0.85, label: '⟳', sub: 'Waffe' },
+    { id: 'Brake', x: 100 + STICK_R + r + 20, y: H - 62, r: r * 0.85, label: '■', sub: 'Bremse' },
+    { id: 'KeyP', x: W / 2, y: 30, r: 20, label: 'II', sub: '' },
+  ];
+}
+function stickVec(st) {
+  if (!st) return { m: 0, a: 0 };
+  const dx = st.x - st.ox, dy = st.y - st.oy;
+  return { m: Math.min(1, Math.hypot(dx, dy) / STICK_R), a: Math.atan2(dy, dx) };
+}
+function onTouchStart(e) {
+  e.preventDefault();
+  touchMode = true;
+  Snd.init();
+  for (const t of e.changedTouches) {
+    const x = t.clientX, y = t.clientY;
+    pressed.Mouse = true;
+    if (state !== 'play') { if (state === 'paused') pressed.KeyP = true; continue; }
+    const btn = touchButtons().find(b => Math.hypot(b.x - x, b.y - y) < b.r + 10);
+    if (btn) {
+      if (btn.id === 'Brake') { touch.brake = true; touch.brakeId = t.identifier; }
+      else pressed[btn.id] = true;
+      continue;
+    }
+    if (x < W / 2) { if (!touch.move) touch.move = { id: t.identifier, ox: x, oy: y, x, y }; }
+    else if (!touch.aim) { touch.aim = { id: t.identifier, ox: x, oy: y, x, y }; pressed.AimStart = true; }
+  }
+}
+function onTouchMove(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) for (const st of [touch.move, touch.aim]) {
+    if (!st || st.id !== t.identifier) continue;
+    st.x = t.clientX; st.y = t.clientY;
+    // Stick wandert mit, wenn der Finger weit rauszieht
+    const dx = st.x - st.ox, dy = st.y - st.oy, d = Math.hypot(dx, dy);
+    if (d > STICK_R * 1.4) { st.ox = st.x - dx / d * STICK_R * 1.4; st.oy = st.y - dy / d * STICK_R * 1.4; }
+  }
+}
+function onTouchEnd(e) {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    if (touch.move && touch.move.id === t.identifier) touch.move = null;
+    if (touch.aim && touch.aim.id === t.identifier) touch.aim = null;
+    if (touch.brakeId === t.identifier) { touch.brake = false; touch.brakeId = null; }
+  }
+}
+cv.addEventListener('touchstart', onTouchStart, { passive: false });
+cv.addEventListener('touchmove', onTouchMove, { passive: false });
+cv.addEventListener('touchend', onTouchEnd, { passive: false });
+cv.addEventListener('touchcancel', onTouchEnd, { passive: false });
+cv.addEventListener('mousemove', () => { if (!touch.move && !touch.aim && !matchMedia('(pointer: coarse)').matches) touchMode = false; });
+
+function drawTouchControls() {
+  if (!touchMode || state !== 'play') return;
+  const stick = (st, col, defX, defY) => {
+    const ox = st ? st.ox : defX, oy = st ? st.oy : defY;
+    ctx.globalAlpha = st ? 0.9 : 0.45;
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.arc(ox, oy, STICK_R, 0, TAU); ctx.fill();
+    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.stroke();
+    let kx = ox, ky = oy;
+    if (st) { const v = stickVec(st); kx = ox + Math.cos(v.a) * v.m * STICK_R; ky = oy + Math.sin(v.a) * v.m * STICK_R; }
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(kx, ky, 24, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+  };
+  stick(touch.move, '#3dd68c', 100, H - 110);
+  if (WEAPONS[player.weapon].dmg) {
+    stick(touch.aim, '#ff6b6b', W - 110, H - 110);
+    if (!touch.aim) { ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.font = 'bold 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Zielen + Feuer', W - 110, H - 110 - STICK_R - 12); }
+  }
+  for (const b of touchButtons()) {
+    ctx.fillStyle = (b.id === 'Brake' && touch.brake) ? 'rgba(255,209,102,.6)' : 'rgba(0,0,0,.45)';
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = `bold ${Math.round(b.r * 0.7)}px system-ui, sans-serif`; ctx.fillText(b.label, b.x, b.y - (b.sub ? 4 : 0));
+    if (b.sub) { ctx.font = 'bold 10px system-ui, sans-serif'; ctx.fillText(b.sub, b.x, b.y + b.r * 0.5); }
+  }
+  // Ziellinie
+  if (touch.aim && WEAPONS[player.weapon].dmg) {
+    const sx = W / 2 + (player.x - cam.x) * zoom, sy = H / 2 + (player.y - cam.y) * zoom;
+    ctx.strokeStyle = 'rgba(255,107,107,.5)'; ctx.setLineDash([6, 8]); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + Math.cos(player.aim) * 220 * zoom, sy + Math.sin(player.aim) * 220 * zoom); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
 document.getElementById('startBtn').addEventListener('click', () => {
   Snd.init();
   document.getElementById('overlay').style.display = 'none';
   newGame();
   showBig('Viel Glück!', '#3dd68c', 1.6);
-  toast('Rechts von dir liegt eine Pistole. Steig ab (E), um sie zu holen.', '#ffd166');
+  toast(touchMode ? 'Rechts liegt eine Pistole. Steig ab (⇅) und hol sie!' : 'Rechts von dir liegt eine Pistole. Steig ab (E), um sie zu holen.', '#ffd166');
 });
 
 // ====================================================================
@@ -507,13 +604,21 @@ function knockOff(reason) {
 function mouseWorld() { return { x: cam.x + (mouse.x - W / 2) / zoom, y: cam.y + (mouse.y - H / 2) / zoom }; }
 
 function updatePlayer(dt) {
-  const mw = mouseWorld();
-  player.aim = Math.atan2(mw.y - player.y, mw.x - player.x);
   const up = keys.KeyW || keys.ArrowUp, dn = keys.KeyS || keys.ArrowDown;
   const lf = keys.KeyA || keys.ArrowLeft, rt = keys.KeyD || keys.ArrowRight;
+  const mv = stickVec(touch.move), am = stickVec(touch.aim);
+  let firing = mouse.down;
+  if (touchMode) {
+    if (am.m > 0.2) player.aim = am.a;
+    else if (mv.m > 0.2) player.aim = player.onScooter ? scooter.angle : mv.a;
+    firing = am.m > 0.55;
+  } else {
+    const mw = mouseWorld();
+    player.aim = Math.atan2(mw.y - player.y, mw.x - player.x);
+  }
   hint = '';
 
-  if (pressed.KeyE) {
+  if (pressed.KeyE || pressed.TouchE) {
     if (player.onScooter) dismount();
     else if (dist(player, scooter) < 50) mount();
   }
@@ -522,26 +627,33 @@ function updatePlayer(dt) {
   if (player.onScooter) {
     const grass = tileAtPx(s.x, s.y) === PARK;
     const maxF = grass ? 250 : 390;
-    if (keys.Space) s.speed = approach(s.speed, 0, 900 * dt);
-    else if (up) s.speed += 330 * dt;
-    else if (dn) s.speed -= (s.speed > 0 ? 700 : 240) * dt;
+    let thr = up ? 1 : dn ? -1 : 0, steer = (rt ? 1 : 0) - (lf ? 1 : 0);
+    if (mv.m > 0.15) {
+      // Touch: Roller fährt in die Richtung, in die der Stick zeigt
+      const d = angDiff(s.angle, mv.a);
+      steer = clamp(d * 2.2, -1, 1);
+      thr = Math.abs(d) < 1.9 || s.speed < 60 ? mv.m : -1;
+    }
+    if (keys.Space || touch.brake) s.speed = approach(s.speed, 0, 900 * dt);
+    else if (thr > 0) s.speed += 330 * thr * dt;
+    else if (thr < 0) s.speed -= (s.speed > 0 ? 700 : 240) * dt;
     else s.speed = approach(s.speed, 0, 150 * dt);
     if (s.speed > maxF) s.speed = approach(s.speed, maxF, 600 * dt);
     s.speed = Math.max(s.speed, -90);
-    const steer = (rt ? 1 : 0) - (lf ? 1 : 0);
     const sf = clamp(s.speed / 140, -1, 1);
     s.angle += steer * 3.1 * dt * sf * (1 - Math.min(Math.abs(s.speed) / 1000, 0.3));
-    hint = 'E: Absteigen';
+    hint = touchMode ? '' : 'E: Absteigen';
   } else {
     s.speed = approach(s.speed, 0, 500 * dt);
     let ix = (rt ? 1 : 0) - (lf ? 1 : 0), iy = (dn ? 1 : 0) - (up ? 1 : 0);
     const l = Math.hypot(ix, iy);
-    const sp = 180;
+    let sp = 180;
     if (l > 0) { ix /= l; iy /= l; player.walkT += dt * 10; }
+    else if (mv.m > 0.15) { ix = Math.cos(mv.a); iy = Math.sin(mv.a); sp *= mv.m; player.walkT += dt * 10 * mv.m; }
     const ox = player.x, oy = player.y;
     moveEntity(player, ix * sp * dt, iy * sp * dt, 10);
     player.vx = (player.x - ox) / dt; player.vy = (player.y - oy) / dt;
-    if (dist(player, scooter) < 50) hint = 'E: Aufsteigen';
+    if (dist(player, scooter) < 50) hint = touchMode ? 'Tippe ⇅ zum Aufsteigen' : 'E: Aufsteigen';
   }
   // Roller bewegen (auch führerlos ausrollend)
   const ox = s.x, oy = s.y;
@@ -567,7 +679,7 @@ function updatePlayer(dt) {
   for (let i = 0; i < WEAPON_ORDER.length; i++) {
     if (pressed['Digit' + (i + 1)] && player.ammo[WEAPON_ORDER[i]] !== undefined) player.weapon = WEAPON_ORDER[i];
   }
-  let cyc = wheel + (pressed.KeyQ ? 1 : 0);
+  let cyc = wheel + (pressed.KeyQ || pressed.TouchW ? 1 : 0);
   wheel = 0;
   if (cyc !== 0 && owned.length > 1) {
     const i = owned.indexOf(player.weapon);
@@ -577,9 +689,9 @@ function updatePlayer(dt) {
   // Schießen
   const w = WEAPONS[player.weapon];
   player.fireCd -= dt;
-  if (mouse.down && w.dmg && player.fireCd <= 0) {
+  if (firing && w.dmg && player.fireCd <= 0) {
     if (player.ammo[player.weapon] > 0) fire(w);
-    else if (pressed.Mouse) { Snd.shot('empty'); toast('Keine Munition!', '#ff6b6b'); player.fireCd = 0.3; }
+    else if (pressed.Mouse || pressed.AimStart) { Snd.shot('empty'); toast('Keine Munition!', '#ff6b6b'); player.fireCd = 0.3; }
   }
 }
 
@@ -931,7 +1043,7 @@ function updatePickups(dt) {
       continue;
     }
     const d = dist(p, player);
-    if (player.onScooter) { if (d < 45) hint = 'Steig ab (E), um das aufzuheben!'; continue; }
+    if (player.onScooter) { if (d < 45) hint = touchMode ? 'Steig ab (⇅), um das aufzuheben!' : 'Steig ab (E), um das aufzuheben!'; continue; }
     if (d > 26) continue;
     if (p.type === 'health') {
       if (player.hp >= 100) { hint = 'Gesundheit ist schon voll'; continue; }
@@ -970,7 +1082,7 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   if (state === 'play' || state === 'paused') {
-    if (pressed.Escape || pressed.KeyP) state = state === 'play' ? 'paused' : 'play';
+    if (pressed.Escape || pressed.KeyP) { state = state === 'play' ? 'paused' : 'play'; touch.move = touch.aim = null; touch.brake = false; }
   }
   if (pressed.KeyM) Snd.muted = !Snd.muted;
   if (state === 'play') update(dt);
@@ -1332,7 +1444,7 @@ function drawHUD() {
   }
 
   // Minikarte
-  const ms = Math.min(200, W * 0.28), mx = 16, my = H - ms - 36;
+  const ms = touchMode ? Math.min(120, W * 0.22) : Math.min(200, W * 0.28), mx = 16, my = touchMode ? 16 : H - ms - 36;
   ctx.fillStyle = 'rgba(0,0,0,.6)'; rrect(mx - 4, my - 4, ms + 8, ms + 36, 8); ctx.fill();
   ctx.drawImage(miniCv, mx, my, ms, ms);
   const k = ms / (N * TILE);
@@ -1362,7 +1474,7 @@ function drawHUD() {
   ctx.fillStyle = '#1b2a3f'; ctx.fillRect(mx + bw / 2 + 2, my + ms + 6, bw / 2 - 2, 8);
   ctx.fillStyle = '#4aa3ff'; ctx.fillRect(mx + bw / 2 + 2, my + ms + 6, (bw / 2 - 2) * player.armor / 100, 8);
   ctx.fillStyle = '#cfd6e0'; ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-  ctx.fillText('Gesundheit ' + Math.ceil(player.hp), mx, my + ms + 17);
+  ctx.fillText((touchMode ? '♥ ' : 'Gesundheit ') + Math.ceil(player.hp), mx, my + ms + 17);
   ctx.textAlign = 'right'; ctx.fillText('Weste ' + Math.ceil(player.armor), mx + bw, my + ms + 17);
 
   // Sterne
@@ -1400,10 +1512,11 @@ function drawHUD() {
 
   // Tacho
   if (player.onScooter) {
-    ctx.fillStyle = 'rgba(0,0,0,.55)'; rrect(W - 126, H - 70, 110, 54, 8); ctx.fill();
-    ctx.fillStyle = '#3dd68c'; ctx.font = 'bold 28px Impact, Arial Black, sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText(String(Math.round(Math.abs(scooter.speed) * 0.1)), W - 58, H - 42);
-    ctx.fillStyle = '#cfd6e0'; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillText('km/h', W - 54, H - 40);
+    const ty = touchMode ? 6 : H - 70, tx = touchMode ? W / 2 + 150 : W;
+    ctx.fillStyle = 'rgba(0,0,0,.55)'; rrect(tx - 126, ty, 110, 54, 8); ctx.fill();
+    ctx.fillStyle = '#3dd68c'; ctx.font = 'bold 28px Impact, Arial Black, sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(Math.round(Math.abs(scooter.speed) * 0.1)), tx - 58, ty + 28);
+    ctx.fillStyle = '#cfd6e0'; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillText('km/h', tx - 54, ty + 30);
   }
 
   // Festnahme-Balken
@@ -1415,18 +1528,21 @@ function drawHUD() {
   }
 
   // Hinweise und Meldungen
+  drawTouchControls();
   if (hint && state === 'play') {
     ctx.font = 'bold 15px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const tw = ctx.measureText(hint).width;
-    ctx.fillStyle = 'rgba(0,0,0,.6)'; rrect(W / 2 - tw / 2 - 12, H - 60, tw + 24, 30, 8); ctx.fill();
-    ctx.fillStyle = '#fff'; ctx.fillText(hint, W / 2, H - 45);
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; const hy = touchMode ? H * 0.3 : H - 45;
+    rrect(W / 2 - tw / 2 - 12, hy - 15, tw + 24, 30, 8); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillText(hint, W / 2, hy);
   }
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 14px system-ui, sans-serif';
+  const toastY = touchMode ? ms + 60 : 16;
   toasts.forEach((t, i) => {
     ctx.globalAlpha = Math.min(1, t.t * 2);
     const tw = ctx.measureText(t.text).width;
-    ctx.fillStyle = 'rgba(0,0,0,.6)'; rrect(16, 16 + i * 34, tw + 20, 28, 6); ctx.fill();
-    ctx.fillStyle = t.color; ctx.fillText(t.text, 26, 30 + i * 34);
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; rrect(16, toastY + i * 34, tw + 20, 28, 6); ctx.fill();
+    ctx.fillStyle = t.color; ctx.fillText(t.text, 26, toastY + 14 + i * 34);
   });
   ctx.globalAlpha = 1;
   if (bigMsg) {
@@ -1438,7 +1554,7 @@ function drawHUD() {
   }
 
   // Fadenkreuz
-  if (state === 'play' && w.dmg) {
+  if (state === 'play' && w.dmg && !touchMode) {
     ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(mouse.x, mouse.y, 10, 0, TAU);
     ctx.moveTo(mouse.x - 16, mouse.y); ctx.lineTo(mouse.x - 6, mouse.y); ctx.moveTo(mouse.x + 6, mouse.y); ctx.lineTo(mouse.x + 16, mouse.y);
@@ -1450,7 +1566,7 @@ function drawHUD() {
   if (state === 'paused') {
     ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '56px Impact, Arial Black, sans-serif'; ctx.fillText('PAUSE', W / 2, H / 2);
-    ctx.font = '16px system-ui, sans-serif'; ctx.fillText('P oder Esc zum Weiterspielen · M: Ton ' + (Snd.muted ? 'an' : 'aus'), W / 2, H / 2 + 44);
+    ctx.font = '16px system-ui, sans-serif'; ctx.fillText(touchMode ? 'Tippen zum Weiterspielen' : 'P oder Esc zum Weiterspielen · M: Ton ' + (Snd.muted ? 'an' : 'aus'), W / 2, H / 2 + 44);
   }
   if (state === 'wasted' || state === 'busted') {
     const a = Math.min(1, endTimer / 1.2);
@@ -1464,7 +1580,7 @@ function drawHUD() {
     ctx.fillStyle = '#fff'; ctx.font = '17px system-ui, sans-serif';
     const m = Math.floor(stats.time / 60), s = Math.floor(stats.time % 60);
     ctx.fillText(`Zeit auf der Flucht: ${m}:${String(s).padStart(2, '0')}   ·   Zerstörte Polizeifahrzeuge: ${stats.destroyed}   ·   Max. Sterne: ${stats.maxStars}`, W / 2, H * 0.42 + 60);
-    if (endTimer > 1.5) { ctx.fillStyle = '#ffd166'; ctx.fillText('Klicken oder Enter drücken zum Weiterspielen', W / 2, H * 0.42 + 95); }
+    if (endTimer > 1.5) { ctx.fillStyle = '#ffd166'; ctx.fillText(touchMode ? 'Tippen zum Weiterspielen' : 'Klicken oder Enter drücken zum Weiterspielen', W / 2, H * 0.42 + 95); }
     ctx.globalAlpha = 1;
   }
 }
