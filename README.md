@@ -18,6 +18,8 @@ Nur in der 3D-Version:
 - **Ampeln** an allen Kreuzungen (16-Sekunden-Takt, abwechselnd für waagrechte und senkrechte Straßen).
 - **Passanten** laufen auf den Gehwegen um die Blöcke und überqueren die Straße über die Zebrastreifen – nur wenn die Autos Rot haben. Bei Schüssen rennen sie weg.
 - **Anfahren** mit dem Roller (oder durch Polizeiautos) → Ragdoll, nach 2 Sekunden stehen sie wieder auf. **Erschießen** kostet 50 $ pro Passant und gibt sofort einen Stern.
+- **2 Werkstätten** (W auf der Minikarte): Mit **F** das Rolltor öffnen – mit Sternen geht das nicht. Mit dem Roller reinfahren, dann öffnet sich das Tuning-Menü: 3 Upgrades (400 $, 900 $, 1.600 $), jedes macht den Roller **1,5× schneller** (39 → 59 → 88 → 132 km/h).
+- **Autohaus** (A auf der Minikarte): Nach allen 3 Upgrades gibt es dort das **E-Moped für 5.000 $** – noch schneller (171 km/h), stabiler bei Crashs und Rammstößen. Upgrades und Moped bleiben im Browser gespeichert.
 - **3 Dealer** (grünes $ auf der Minikarte): Zu Fuß hingehen und E drücken → Munition für eine Waffe deiner Wahl nachfüllen, neue Waffen, Schutzweste und Erste Hilfe kaufen. Solange du gesucht wirst, handeln sie nicht.
 
 ## Starten
