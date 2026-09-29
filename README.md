@@ -72,3 +72,18 @@ Das Spiel erkennt Touch automatisch. Handy quer halten:
 - **BUSTED:** Bleibst du bei bis zu 3 Sternen stehen, während ein Polizist neben dir hält,
   wirst du festgenommen (Waffen weg, Neustart an der Polizeiwache).
 - **WASTED:** Gesundheit auf 0 → Neustart am Krankenhaus.
+
+## Großstadt (3D-Version)
+
+- **Umzug:** Mit E-Moped und 10.000 $ zur Autobahn-Auffahrt ganz im Osten der Kleinstadt (→ auf der Minikarte) und E drücken.
+  Unterwegs stoppt dich die Polizei: Moped und Geld werden beschlagnahmt, du kommst in Haft und wirst in der Großstadt entlassen.
+- **Neustart ohne alles:** kein Geld, keine Fahrzeuge, keine Waffen auf den Straßen (nur Gesundheit und Westen).
+- **Automaten** (€ auf der Karte): E drücken und stehen bleiben. Snackautomaten 35–90 $, Geldautomaten 120–260 $; manchmal gibt es stillen Alarm (1 Stern). Danach sind sie 3 Minuten leer.
+- **Verkehr:** NPC-Autos fahren rechts, halten an roten Ampeln, hinter anderen Autos und vor Fußgängern und hupen, wenn du im Weg stehst. Man kann sie abschießen (1 Stern).
+- **Downtown:** Hochhausviertel in der Stadtmitte mit deiner **Wohnung** (⌂). Rein kommst du nur zu Fuß und ohne Sterne. Drinnen gehst du langsamer,
+  lagerst Waffen im **Tresor** (mitgenommene Waffen sind nach Tod/Festnahme weg) und wählst am **Schlüsselbrett** dein Fahrzeug.
+- **Scooter-Laden** (S): Stadtflitzer (250 $), Sprinter (700 $), Blitz X (1.500 $). Mit allen drei gibt es das **E-Moped** (5.000 $).
+- **Werkstatt** (W): Roller-Upgrades, +2 km/h je Stufe (max. 50 km/h).
+- **Autohaus** (A): Sportwagen (15.000 $, 5 Gänge) – erst nach dem E-Moped.
+- **Tune-Shop** (T): Lackierung, Spoiler, Goldfelgen, Motor (+10 km/h je Stufe bis 120 km/h), Panzerung.
+- „Spielstand zurücksetzen“ auf dem Startbildschirm bringt dich zurück in die Kleinstadt.

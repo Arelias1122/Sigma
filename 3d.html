@@ -42,6 +42,21 @@
   .item button { font-size: 15px; padding: 9px 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .item button.buy { background: linear-gradient(90deg,#ffd166,#f0b43c); color: #2a1d00; }
   #shopClose { background: #2a3342; color: #fff; width: 100%; }
+  .row-btns { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  button.ghost { background: transparent; color: #9aa6b8; border: 1px solid #3a4456; font-size: 14px; padding: 10px 16px; }
+  .swatches { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .swatch { width: 28px; height: 28px; padding: 0; border-radius: 50%; border: 2px solid #2a3342; }
+  .swatch.on { border-color: #fff; box-shadow: 0 0 0 2px #ffd166; filter: none; }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  #cutscene { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 12;
+    background: #05070b; padding: 16px; box-sizing: border-box; }
+  .cut h1 { background: linear-gradient(90deg,#ff6b6b,#4aa3ff); -webkit-background-clip: text; background-clip: text; }
+  #cutLog p { margin: 0 0 12px; font-size: 17px; line-height: 1.5; color: #cfd6e0; animation: cutIn .6s ease both; }
+  #cutLog p.warn { color: #ff8a8a; font-weight: 700; }
+  #cutLog p.jail { color: #ffd166; font-family: Impact, "Arial Black", sans-serif; font-size: 24px; letter-spacing: 1px; }
+  #cutLog p.ok { color: #7ee08a; font-weight: 700; }
+  @keyframes cutIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { #cutLog p { animation: none; } }
 </style>
 </head>
 <body>
@@ -84,7 +99,18 @@
       <b>Waffen</b> liegen überall herum – steig vom Roller ab, um sie aufzuheben.
       Bleibst du (bis 3 Sterne) stehen, während ein Polizist neben dir hält: <b>BUSTED</b>.
     </div>
-    <button id="startBtn">Losfahren</button>
+    <div id="worldInfo" class="tip" hidden></div>
+    <div class="row-btns">
+      <button id="startBtn">Losfahren</button>
+      <button id="resetBtn" class="ghost">Spielstand zurücksetzen</button>
+    </div>
+  </div>
+</div>
+<div id="cutscene" hidden>
+  <div class="panel cut">
+    <h1>UNTERWEGS</h1>
+    <div id="cutLog"></div>
+    <button id="cutBtn" hidden>Weiter in die Großstadt</button>
   </div>
 </div>
 <div id="shop" hidden>
@@ -134,15 +160,38 @@ function mulberry32(a) {
 // ====================================================================
 //  Karte
 // ====================================================================
-const TILE = 64, N = 62, BLOCKS = 6;
+// Zwei Welten: die Kleinstadt ('town') und nach dem Umzug die Großstadt ('city').
+// Welt, Geld, Fahrzeuge usw. liegen im localStorage; die Großstadt hat eigene Schlüssel ("escooter3d.city.…").
+const SAVE = 'escooter3d.';
+let WORLD_ID = 'town';
+try { if (localStorage.getItem(SAVE + 'world') === 'city') WORLD_ID = 'city'; } catch (e) {}
+if (location.hash === '#grossstadt') WORLD_ID = 'city';
+const BIG = WORLD_ID === 'city';
+const skey = k => SAVE + (BIG ? 'city.' : '') + k;
+function load(k, def) {
+  try {
+    const v = localStorage.getItem(skey(k));
+    if (v === null) return def;
+    try { return JSON.parse(v); } catch (e) { return v; }
+  } catch (e) { return def; }
+}
+function save(k, v) { try { localStorage.setItem(skey(k), JSON.stringify(v)); } catch (e) {} }
+
+const TILE = 64, BLOCKS = BIG ? 12 : 6, N = BLOCKS * 10 + 2;
 const ROAD = 0, WALK = 1, BUILD = 2, PARK = 3;
 const map = new Uint8Array(N * N);
 const blockKind = [];
 const buildings = [];
 const trees = [];
 const fountains = [];
-const POLICE_BLOCK = { bx: 1, by: 1 }, HOSPITAL_BLOCK = { bx: 4, by: 3 };
-const GARAGE_BLOCKS = [{ bx: 3, by: 1 }, { bx: 1, by: 4 }], AUTOHAUS_BLOCK = { bx: 5, by: 2 };
+// Besondere Blöcke je Welt
+const SPECIAL = BIG ? {
+  police: { bx: 2, by: 2 }, hospital: { bx: 9, by: 8 }, garages: [{ bx: 3, by: 9 }], autohaus: { bx: 10, by: 4 },
+  scootershop: { bx: 8, by: 2 }, tuneshop: { bx: 1, by: 6 }, home: { bx: 5, by: 6 }, prison: { bx: 0, by: 11 },
+} : { police: { bx: 1, by: 1 }, hospital: { bx: 4, by: 3 }, garages: [{ bx: 3, by: 1 }, { bx: 1, by: 4 }], autohaus: { bx: 5, by: 2 } };
+const POLICE_BLOCK = SPECIAL.police, HOSPITAL_BLOCK = SPECIAL.hospital, GARAGE_BLOCKS = SPECIAL.garages, AUTOHAUS_BLOCK = SPECIAL.autohaus;
+// Downtown: die inneren 4 × 4 Blöcke der Großstadt mit Hochhäusern
+const isDowntown = (bx, by) => BIG && bx >= 4 && bx <= 7 && by >= 4 && by <= 7;
 
 function tileAt(tx, ty) {
   if (tx < 0 || ty < 0 || tx >= N || ty >= N) return BUILD;
@@ -151,14 +200,14 @@ function tileAt(tx, ty) {
 const tileAtPx = (x, y) => tileAt(Math.floor(x / TILE), Math.floor(y / TILE));
 
 (function generateMap() {
-  const rng = mulberry32(20260928);
+  const rng = mulberry32(BIG ? 4242 : 20260928);
   for (let by = 0; by < BLOCKS; by++) for (let bx = 0; bx < BLOCKS; bx++) {
     const r = rng();
-    let k = r < 0.17 ? 'park' : r < 0.24 ? 'plaza' : 'build';
-    if (bx === POLICE_BLOCK.bx && by === POLICE_BLOCK.by) k = 'police';
-    if (bx === HOSPITAL_BLOCK.bx && by === HOSPITAL_BLOCK.by) k = 'hospital';
-    if (GARAGE_BLOCKS.some(g => g.bx === bx && g.by === by)) k = 'garage';
-    if (bx === AUTOHAUS_BLOCK.bx && by === AUTOHAUS_BLOCK.by) k = 'autohaus';
+    let k = isDowntown(bx, by) ? 'build' : r < (BIG ? 0.12 : 0.17) ? 'park' : r < (BIG ? 0.17 : 0.24) ? 'plaza' : 'build';
+    for (const [name, b] of Object.entries(SPECIAL)) {
+      if (name === 'garages') { if (b.some(g => g.bx === bx && g.by === by)) k = 'garage'; }
+      else if (b.bx === bx && b.by === by) k = name;
+    }
     blockKind[by * BLOCKS + bx] = k;
   }
   for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
@@ -191,8 +240,8 @@ const tileAtPx = (x, y) => tileAt(Math.floor(x / TILE), Math.floor(y / TILE));
     for (const r of rects) {
       buildings.push({
         x: (x0 + r[0]) * TILE, y: (y0 + r[1]) * TILE, w: r[2] * TILE, h: r[3] * TILE,
-        color: k === 'police' ? '#3b5d8f' : k === 'hospital' ? '#e8ecef' : palette[Math.floor(rng() * palette.length)],
-        ht: 10 + rng() * 18, kind: k, seed: rng(),
+        color: ({ police: '#3b5d8f', hospital: '#e8ecef', prison: '#8d9096', home: '#d8c7a8' })[k] || palette[Math.floor(rng() * palette.length)],
+        ht: 10 + rng() * 18, kind: k, seed: rng(), downtown: isDowntown(bx, by),
       });
     }
   }
@@ -213,6 +262,7 @@ miniCv.width = N * 3; miniCv.height = N * 3;
 
 // Kollision Kreis gegen Gebäude
 function hitsWall(x, y, r) {
+  if (indoors) return hitsInterior(x, y, r);
   const x0 = Math.floor((x - r) / TILE), x1 = Math.floor((x + r) / TILE);
   const y0 = Math.floor((y - r) / TILE), y1 = Math.floor((y + r) / TILE);
   for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
@@ -352,6 +402,16 @@ const Snd = {
       o.connect(g); g.connect(this.master); o.start(t + i * 0.07); o.stop(t + i * 0.07 + 0.2);
     });
   },
+  clank() { this.burst(4200, 0.06, 0.16, 'highpass'); this.thump(420, 0.05, 0.1); },
+  honk(vol = 1) {
+    if (!this.ctx) return;
+    const c = this.ctx, t = c.currentTime;
+    for (const f of [392, 494]) {
+      const o = c.createOscillator(); o.type = 'square'; o.frequency.value = f;
+      const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.05 * vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      o.connect(g); g.connect(this.master); o.start(t); o.stop(t + 0.4);
+    }
+  },
   shift() {
     if (!this.ctx) return;
     this.burst(2600, 0.05, 0.25, 'highpass');
@@ -394,7 +454,7 @@ const WEAPONS = {
   rifle:   { name: 'Sturmgewehr', dmg: 19, rate: 0.11, speed: 1250, spread: 0.05, pellets: 1, pickup: 90, len: 20, snd: 'rifle', color: '#fff0a8' },
   rpg:     { name: 'Raketenwerfer', dmg: 160, rate: 1.1, speed: 600, spread: 0.01, pellets: 1, pickup: 5, len: 22, snd: 'rpg', rocket: true },
 };
-const PICKUP_TYPES = [['pistol', 4], ['uzi', 3], ['shotgun', 3], ['rifle', 2], ['rpg', 1], ['health', 3], ['armor', 2]];
+const PICKUP_TYPES = BIG ? [['health', 3], ['armor', 2]] : [['pistol', 4], ['uzi', 3], ['shotgun', 3], ['rifle', 2], ['rpg', 1], ['health', 3], ['armor', 2]];
 function randomPickupType() {
   const total = PICKUP_TYPES.reduce((s, p) => s + p[1], 0);
   let r = Math.random() * total;
@@ -412,9 +472,8 @@ let patrolTimer = 20, spawnTimer = 0, heliTimer = 0, bustTimer = 0, gunfireHeat 
 let time = 0, shake = 0, hurtFlash = 0, endTimer = 0;
 let stats = { time: 0, destroyed: 0, maxStars: 0 };
 let bigMsg = null, toasts = [], hint = '';
-let money = 300, floaters = [];
-try { const m = parseInt(localStorage.getItem('escooter3d.money'), 10); if (m >= 0) money = m; } catch (e) {}
-function saveMoney() { try { localStorage.setItem('escooter3d.money', String(money)); } catch (e) {} }
+let money = Math.max(0, load('money', BIG ? 0 : 300) | 0), floaters = [];
+function saveMoney() { save('money', money); }
 const fmtMoney = n => '$' + n.toLocaleString('de-DE');
 function addMoney(n, x, y) {
   money = Math.max(0, money + n);
@@ -424,7 +483,8 @@ function addMoney(n, x, y) {
 }
 
 // Dealer: je einer auf dem Gehweg dreier weit auseinanderliegender Blöcke
-const dealers = [{ bx: 4, by: 0 }, { bx: 0, by: 4 }, { bx: 3, by: 5 }].map(b => ({ x: (b.bx * 10 + 2.5) * TILE, y: (b.by * 10 + 5.5) * TILE, angle: Math.PI }));
+const DEALER_BLOCKS = BIG ? [{ bx: 3, by: 0 }, { bx: 0, by: 3 }, { bx: 11, by: 5 }, { bx: 6, by: 11 }] : [{ bx: 4, by: 0 }, { bx: 0, by: 4 }, { bx: 3, by: 5 }];
+const dealers = DEALER_BLOCKS.map(b => ({ x: (b.bx * 10 + 2.5) * TILE, y: (b.by * 10 + 5.5) * TILE, angle: Math.PI }));
 const SHOP = { pistol: { ammo: 120, weapon: 350 }, uzi: { ammo: 220, weapon: 650 }, shotgun: { ammo: 260, weapon: 750 }, rifle: { ammo: 380, weapon: 1200 }, rpg: { ammo: 900, weapon: 2500 } };
 const EXTRAS = [
   { id: 'armor', name: 'Schutzweste', desc: '+50 Weste', price: 200 },
@@ -445,9 +505,9 @@ function toast(text, color = '#fff') { toasts.push({ text, color, t: 3 }); if (t
 function spawnPickups() {
   pickups = [];
   const start = blockSidewalk(HOSPITAL_BLOCK);
-  pickups.push({ x: start.x + 2 * TILE, y: start.y, type: 'pistol', taken: false, respawn: 0, bob: 0 });
+  if (!BIG) pickups.push({ x: start.x + 2 * TILE, y: start.y, type: 'pistol', taken: false, respawn: 0, bob: 0 });
   let tries = 0;
-  while (pickups.length < 24 && tries++ < 2000) {
+  while (pickups.length < (BIG ? 18 : 24) && tries++ < 3000) {
     const tx = Math.floor(Math.random() * N), ty = Math.floor(Math.random() * N);
     const t = tileAt(tx, ty);
     if (t !== WALK && t !== PARK) continue;
@@ -457,24 +517,27 @@ function spawnPickups() {
   }
 }
 
-function newGame() {
+function newGame(fresh) {
   cops = []; bullets = []; particles = []; wrecks = []; heli = null;
   stats = { time: 0, destroyed: 0, maxStars: 0 };
   spawnPickups();
-  respawn('hospital', true);
+  respawn(fresh ? 'prison' : 'hospital', true);
+  if (fresh) save('fresh', false);
   patrolTimer = 12;
 }
 
 function respawn(where, fresh) {
-  const p = blockSidewalk(where === 'police' ? POLICE_BLOCK : HOSPITAL_BLOCK);
+  const p = blockSidewalk(where === 'police' ? POLICE_BLOCK : where === 'prison' ? SPECIAL.prison : HOSPITAL_BLOCK);
   const keepHp = where === 'police' && player ? player.hp : 100;
   player = {
-    x: p.x, y: p.y + 4, vx: 0, vy: 0, aim: 0, onScooter: true, hp: Math.max(keepHp, 40), armor: 0,
+    x: p.x, y: p.y + 4, vx: 0, vy: 0, aim: 0, onScooter: !BIG && hasVehicle(), hp: Math.max(keepHp, 40), armor: 0,
     weapon: 'fists', ammo: { fists: Infinity }, fireCd: 0, walkT: 0,
   };
   if (fresh) player.hp = 100;
-  scooter = { x: p.x, y: p.y + 4, angle: 0, speed: 0 };
-  cops = []; heli = null; bullets = []; peds = [];
+  // In der Großstadt startest du zu Fuß; ein eigenes Fahrzeug steht dann am Straßenrand
+  scooter = { x: p.x + (BIG ? 70 : 0), y: p.y + (BIG ? 56 : 4), angle: 0, speed: 0 };
+  cops = []; heli = null; bullets = []; peds = []; traffic = []; trafficFill = 2;
+  indoors = false; robbing = null;
   stats = { time: 0, destroyed: 0, maxStars: 0 };
   wanted = 0; loseTimer = 0; seen = false; bustTimer = 0; gunfireHeat = 0;
   patrolTimer = 15; heliTimer = 0;
@@ -518,6 +581,8 @@ function touchButtons() {
   return [
     Object.assign({ id: 'TouchE', x: bx, y: H - 150, r }, ({
       door: { label: '⇡', sub: 'Tor' }, garage: { label: 'W', sub: 'Werkstatt' }, auto: { label: 'A', sub: 'Autohaus' }, dealer: { label: '$', sub: 'Dealer' },
+      scooter: { label: 'S', sub: 'Laden' }, tune: { label: 'T', sub: 'Tuning' }, home: { label: '⌂', sub: 'Haus' }, atm: { label: '€', sub: 'Knacken' },
+      exit: { label: '→', sub: 'Umzug' }, safe: { label: '▣', sub: 'Tresor' }, keys: { label: 'K', sub: 'Schlüssel' }, leave: { label: '⌂', sub: 'Raus' },
     })[interactCtx()] || { label: '⇅', sub: player && player.onScooter ? 'Ab' : 'Auf' }),
     { id: 'TouchW', x: bx, y: H - 62, r: r * 0.85, label: '⟳', sub: 'Waffe' },
     { id: 'Brake', x: 100 + STICK_R + r + 20, y: H - 62, r: r * 0.85, label: '■', sub: 'Bremse' },
@@ -612,18 +677,54 @@ function drawTouchControls() {
   }
 }
 
+// Startbildschirm je nach Welt
+(function setupTitle() {
+  const h1 = document.querySelector('#overlay h1'), sub = document.querySelector('#overlay .sub'), info = document.getElementById('worldInfo');
+  if (!BIG) {
+    info.hidden = false;
+    info.innerHTML = '<b>Großstadt:</b> Mit dem E-Moped und 10.000 $ kannst du an der Autobahn-Auffahrt (→ auf der Karte, ganz im Osten) in die Großstadt ziehen.';
+    return;
+  }
+  const fresh = load('fresh', false);
+  h1.textContent = fresh ? 'ENTLASSEN' : 'GROSSSTADT';
+  sub.textContent = fresh ? 'Drei Tage Haft liegen hinter dir. Das Gefängnistor geht auf – vor dir liegt die Großstadt.'
+    : 'Downtown, Verkehr, Automaten – und die Polizei schläft nie.';
+  info.hidden = false;
+  info.innerHTML = '<b>Neu in der Großstadt:</b> Kein Geld, keine Fahrzeuge, keine Waffen auf der Straße. ' +
+    'Knack <b>Automaten</b> (€ auf der Karte, E drücken und stehen bleiben) – manchmal gibt es stillen Alarm. ' +
+    'Im <b>Scooter-Laden</b> (S) gibt es drei Roller, danach das E-Moped. Im <b>Autohaus</b> (A) wartet ein Sportwagen, den du im <b>Tune-Shop</b> (T) lackieren und tunen kannst. ' +
+    'Die <b>Werkstatt</b> (W) tunt Roller. Deine <b>Wohnung</b> (⌂) ist in Downtown: Nur ohne Sterne und zu Fuß kommst du rein; drinnen lagerst du Waffen im Tresor und wählst am Schlüsselbrett dein Fahrzeug.';
+  document.getElementById('startBtn').textContent = fresh ? 'Raus in die Stadt' : 'Losgehen';
+})();
+const resetBtn = document.getElementById('resetBtn');
+resetBtn.addEventListener('click', () => {
+  if (!resetBtn.dataset.sure) { resetBtn.dataset.sure = '1'; resetBtn.textContent = 'Wirklich alles löschen? Nochmal klicken'; return; }
+  try { for (const k of Object.keys(localStorage)) if (k.startsWith(SAVE)) localStorage.removeItem(k); } catch (e) {}
+  location.hash = '';
+  location.reload();
+});
+document.getElementById('cutBtn').addEventListener('click', () => finishMove());
+
 document.getElementById('startBtn').addEventListener('click', () => {
   Snd.init();
   document.getElementById('overlay').style.display = 'none';
-  newGame();
-  showBig('Viel Glück!', '#3dd68c', 1.6);
-  toast(touchMode ? 'Rechts liegt eine Pistole. Steig ab (⇅) und hol sie!' : 'Rechts von dir liegt eine Pistole. Steig ab (E), um sie zu holen.', '#ffd166');
+  const fresh = BIG && load('fresh', false);
+  newGame(fresh);
+  if (fresh) {
+    showBig('ENTLASSEN', '#ffd166', 2.6);
+    toast('Kein Geld, kein Fahrzeug. Automaten (€ auf der Karte) kannst du knacken.', '#ffd166');
+    toast('Deine Wohnung ist in Downtown (⌂ auf der Karte).', '#8ab4ff');
+  } else if (BIG) showBig('GROSSSTADT', '#6fc3ff', 1.6);
+  else {
+    showBig('Viel Glück!', '#3dd68c', 1.6);
+    toast(touchMode ? 'Rechts liegt eine Pistole. Steig ab (⇅) und hol sie!' : 'Rechts von dir liegt eine Pistole. Steig ab (E), um sie zu holen.', '#ffd166');
+  }
 });
 
 // ====================================================================
 //  Fahndungslevel
 // ====================================================================
-function isSuspicious() { return player.onScooter || player.weapon !== 'fists'; }
+function isSuspicious() { return (player.onScooter && vKind() !== 'car') || player.weapon !== 'fists'; }
 function searchRadius() { return 320 + wanted * 110; }
 function loseTime() { return 4 + wanted * 2.5; }
 
@@ -683,14 +784,15 @@ function damagePlayer(d) {
 function mount() { player.onScooter = true; player.x = scooter.x; player.y = scooter.y; }
 function dismount() {
   player.onScooter = false;
+  const off = vKind() === 'car' ? 34 : 26;
   for (const side of [1, -1, 0]) {
     const a = scooter.angle + side * Math.PI / 2;
-    const x = scooter.x + Math.cos(a) * 26 * Math.abs(side), y = scooter.y + Math.sin(a) * 26 * Math.abs(side);
+    const x = scooter.x + Math.cos(a) * off * Math.abs(side), y = scooter.y + Math.sin(a) * off * Math.abs(side);
     if (!hitsWall(x, y, 10)) { player.x = x; player.y = y; break; }
   }
 }
 function knockOff(reason) {
-  if (!player.onScooter) return;
+  if (!player.onScooter || vKind() === 'car') return;
   dismount();
   scooter.speed *= 0.3;
   toast(reason, '#ffb347');
@@ -703,11 +805,11 @@ function updatePlayer(dt) {
   const lf = keys.KeyA || keys.ArrowLeft, rt = keys.KeyD || keys.ArrowRight;
   const mv = stickVec(touch.move), am = stickVec(touch.aim);
   mv.a = screenToWorldAngle(mv.a); am.a = screenToWorldAngle(am.a);
-  let firing = mouse.down;
+  let firing = mouse.down && !indoors;
   if (touchMode) {
     if (am.m > 0.2) player.aim = am.a;
     else if (mv.m > 0.2) player.aim = player.onScooter ? scooter.angle : mv.a;
-    firing = am.m > 0.55;
+    firing = am.m > 0.55 && !indoors;
   } else {
     const mw = mouseWorld();
     player.aim = Math.atan2(mw.y - player.y, mw.x - player.x);
@@ -721,21 +823,37 @@ function updatePlayer(dt) {
     if (g) toggleDoor(g);
   }
   if (pressed.KeyE || (pressed.TouchE && ictx !== 'door')) {
-    if (dealer && !player.onScooter) {
-      if (wanted > 0) toast('Der Dealer redet nicht mit dir, solange die Polizei dich sucht!', '#ff6b6b');
-      else { openShop(); return; }
-    } else if (ictx === 'auto') {
-      if (wanted > 0) toast('Mit Sternen verkauft dir hier keiner was!', '#ff6b6b');
-      else { openMenu('auto'); return; }
-    } else if (ictx === 'garage') { openMenu('garage'); return; }
-    else if (player.onScooter) dismount();
-    else if (dist(player, scooter) < 50) mount();
+    const blocked = () => { if (wanted > 0) toast('Mit Sternen macht hier keiner Geschäfte mit dir!', '#ff6b6b'); return wanted > 0; };
+    switch (ictx) {
+      case 'dealer':
+        if (wanted > 0) toast('Der Dealer redet nicht mit dir, solange die Polizei dich sucht!', '#ff6b6b');
+        else { openShop(); return; }
+        break;
+      case 'auto': if (!blocked()) { openMenu('auto'); return; } break;
+      case 'scooter': if (!blocked()) { openMenu('scooter'); return; } break;
+      case 'tune': if (!blocked()) { openMenu('tune'); return; } break;
+      case 'garage': openMenu('garage'); return;
+      case 'home':
+        if (wanted > 0) toast('Mit Sternen kannst du nicht nach Hause – die Polizei würde dich finden.', '#ff6b6b');
+        else if (player.onScooter) toast('Steig erst ab.', '#ffb347');
+        else { enterHome(); return; }
+        break;
+      case 'atm': startRob(atms.find(m => dist(player, m) < 42)); break;
+      case 'exit': tryMove(); return;
+      case 'safe': openMenu('safe'); return;
+      case 'keys': openMenu('keys'); return;
+      case 'leave': leaveHome(); return;
+      default:
+        if (player.onScooter) dismount();
+        else if (hasVehicle() && dist(player, scooter) < (vKind() === 'car' ? 62 : 50)) mount();
+    }
   }
 
   const s = scooter;
   if (player.onScooter) {
     const grass = tileAtPx(s.x, s.y) === PARK;
-    const M = speedMult(), moped = vehicle === 'moped', sM = Math.sqrt(M);
+    const M = speedMult(), kind = vKind(), sM = Math.sqrt(M);
+    const ACC = { scooter: 1, moped: 1.2, car: 1.35 }[kind], STEER = { scooter: 3.1, moped: 3.4, car: 2.7 }[kind];
     const [gTop, gAcc] = gearsOf()[curGear()];
     const vMax = (grass ? 250 : 390) * M, maxF = vMax * gTop;
     let thr = up ? 1 : dn ? -1 : 0, steer = (rt ? 1 : 0) - (lf ? 1 : 0);
@@ -746,14 +864,14 @@ function updatePlayer(dt) {
       thr = Math.abs(d) < 1.9 || s.speed < 60 ? mv.m : -1;
     }
     if (keys.Space || touch.brake) s.speed = approach(s.speed, 0, 900 * sM * dt);
-    else if (thr > 0 && s.speed < maxF) s.speed = Math.min(maxF, s.speed + 330 * Math.pow(M, 0.85) * (moped ? 1.2 : 1) * gAcc * thr * dt);
+    else if (thr > 0 && s.speed < maxF) s.speed = Math.min(maxF, s.speed + 330 * Math.pow(M, 0.85) * ACC * gAcc * thr * dt);
     else if (thr < 0) s.speed -= (s.speed > 0 ? 700 * sM : 240) * dt;
     else s.speed = approach(s.speed, 0, 150 * dt);
     // Zu schnell für den Gang (z. B. nach dem Runterschalten): Motorbremse
     if (s.speed > maxF) s.speed = approach(s.speed, maxF, (grass && s.speed > vMax ? 600 : 260) * M * dt);
     s.speed = Math.max(s.speed, -90);
     const sf = clamp(s.speed / 140, -1, 1);
-    s.angle += steer * (moped ? 3.4 : 3.1) * (1 + 0.12 * (M - 1)) * dt * sf * (1 - Math.min(Math.abs(s.speed) / (1000 * M), 0.3));
+    s.angle += steer * STEER * (1 + 0.12 * (M - 1)) * dt * sf * (1 - Math.min(Math.abs(s.speed) / (1000 * M), 0.3));
     hint = dealer ? (touchMode ? 'Steig ab (⇅), um mit dem Dealer zu handeln' : 'Steig ab (E), um mit dem Dealer zu handeln') : touchMode ? '' : 'E: Absteigen';
     s.steer = steer;
   } else {
@@ -761,25 +879,25 @@ function updatePlayer(dt) {
     s.steer = 0;
     let ix = (rt ? 1 : 0) - (lf ? 1 : 0), iy = (dn ? 1 : 0) - (up ? 1 : 0);
     const l = Math.hypot(ix, iy);
-    let sp = 180;
+    let sp = indoors ? 105 : 180; // in der Wohnung gehst du langsamer
     if (l > 0) { const a = screenToWorldAngle(Math.atan2(iy, ix)); ix = Math.cos(a); iy = Math.sin(a); player.walkT += dt * 10; }
     else if (mv.m > 0.15) { ix = Math.cos(mv.a); iy = Math.sin(mv.a); sp *= mv.m; player.walkT += dt * 10 * mv.m; }
     const ox = player.x, oy = player.y;
     moveEntity(player, ix * sp * dt, iy * sp * dt, 10);
     player.vx = (player.x - ox) / dt; player.vy = (player.y - oy) / dt;
-    if (dist(player, scooter) < 50) hint = touchMode ? 'Tippe ⇅ zum Aufsteigen' : 'E: Aufsteigen';
+    if (!indoors && hasVehicle() && dist(player, scooter) < (vKind() === 'car' ? 62 : 50)) hint = touchMode ? 'Tippe ⇅ zum Einsteigen' : (vKind() === 'car' ? 'E: Einsteigen' : 'E: Aufsteigen');
     if (dealer) hint = wanted > 0 ? 'Der Dealer handelt nicht, solange du gesucht wirst' : touchMode ? 'Tippe $ für den Dealer-Shop' : 'E: Mit dem Dealer handeln';
   }
-  // Roller bewegen (auch führerlos ausrollend)
+  // Fahrzeug bewegen (auch führerlos ausrollend); in der Wohnung steht es draußen still
   const ox = s.x, oy = s.y;
-  const hit = moveEntity(s, Math.cos(s.angle) * s.speed * dt, Math.sin(s.angle) * s.speed * dt, 11);
+  const hit = !indoors && hasVehicle() && moveEntity(s, Math.cos(s.angle) * s.speed * dt, Math.sin(s.angle) * s.speed * dt, vehRadius());
   if (hit) {
-    const M = speedMult(), imp = Math.abs(s.speed) / M;
+    const M = speedMult(), imp = Math.abs(s.speed) / M, kind = vKind();
     if (player.onScooter && imp > 230) {
-      damagePlayer((imp - 230) * (vehicle === 'moped' ? 0.06 : 0.1));
+      damagePlayer((imp - 230) * ({ scooter: 0.1, moped: 0.06, car: 0.03 }[kind]));
       shake = Math.max(shake, 6);
       Snd.hit();
-      if (imp > (vehicle === 'moped' ? 380 : 340)) knockOff('Crash! Vom ' + vehicleName() + ' geflogen.');
+      if (imp > (kind === 'moped' ? 380 : 340)) knockOff('Crash! Vom ' + vehicleName() + ' geflogen.');
     }
     for (let i = 0; i < 6 && imp > 80; i++) particles.push({ x: s.x + Math.cos(s.angle) * 14, y: s.y + Math.sin(s.angle) * 14, vx: rand(-150, 150), vy: rand(-150, 150), life: 0.3, max: 0.3, size: 2, color: '#ffd166', type: 'dot' });
     s.speed *= -0.2;
@@ -790,13 +908,22 @@ function updatePlayer(dt) {
   }
 
   // Hinweise für Werkstatt & Autohaus
-  const hctx = interactCtx();
-  if (hctx === 'door') hint = wanted > 0 ? 'Mit Sternen öffnet die Werkstatt nicht' : touchMode ? 'Tippe „Tor“ zum Öffnen der Werkstatt' : 'F: Werkstatt-Tor öffnen';
-  else if (hctx === 'garage') hint = touchMode ? 'Tippe „Werkstatt“ zum Tunen' : 'E: Werkstatt-Menü';
-  else if (hctx === 'auto') hint = wanted > 0 ? 'Mit Sternen verkauft dir hier keiner was' : touchMode ? 'Tippe „Autohaus“' : 'E: Autohaus – E-Moped ansehen';
+  const hctx = interactCtx(), T = touchMode, shopHint = (t, k) => wanted > 0 ? 'Mit Sternen macht hier keiner Geschäfte mit dir' : T ? `Tippe „${t}“` : k;
+  const HINTS = {
+    door: wanted > 0 ? 'Mit Sternen öffnet die Werkstatt nicht' : T ? 'Tippe „Tor“ zum Öffnen der Werkstatt' : 'F: Werkstatt-Tor öffnen',
+    garage: T ? 'Tippe „Werkstatt“ zum Tunen' : 'E: Werkstatt-Menü',
+    auto: shopHint('Autohaus', BIG ? 'E: Autohaus – Sportwagen ansehen' : 'E: Autohaus – E-Moped ansehen'),
+    scooter: shopHint('Laden', 'E: Scooter-Laden'),
+    tune: shopHint('Tuning', 'E: Tune-Shop'),
+    home: wanted > 0 ? 'Mit Sternen kommst du nicht rein' : player.onScooter ? 'Steig ab, um reinzugehen' : T ? 'Tippe „Haus“' : 'E: Nach Hause gehen',
+    atm: robbing ? '' : T ? 'Tippe „Knacken“ – Automat aufbrechen' : 'E: Automat aufbrechen',
+    exit: vehicle !== 'moped' || money < MOVE_PRICE ? `In die Großstadt: E-Moped + ${fmtMoney(MOVE_PRICE)} nötig` : T ? 'Tippe „Umzug“' : 'E: In die Großstadt ziehen',
+    safe: T ? 'Tippe „Tresor“' : 'E: Waffentresor', keys: T ? 'Tippe „Schlüssel“' : 'E: Fahrzeug wählen', leave: T ? 'Tippe „Raus“' : 'E: Rausgehen',
+  };
+  if (hctx && HINTS[hctx] !== undefined) { if (hctx !== 'dealer') hint = HINTS[hctx]; }
   else {
     const g = garages.find(g => g.target === 1 && dist(player, g.door) < 160 && !inBay(g, scooter.x, scooter.y));
-    if (g) hint = player.onScooter ? 'Fahr rein zum Tunen · F: Tor schließen' : 'Hol deinen ' + vehicleName() + ' und fahr rein · F: Tor schließen';
+    if (g) hint = player.onScooter ? 'Fahr rein zum Tunen · F: Tor schließen' : 'Hol dein Fahrzeug und fahr rein · F: Tor schließen';
   }
 
   // Waffe wechseln
@@ -967,11 +1094,11 @@ function updateCops(dt) {
       moveEntity(ent, nx * (R - dP), ny * (R - dP), player.onScooter ? 11 : 10);
       if (player.onScooter) { player.x = scooter.x; player.y = scooter.y; }
       if (rel > 110 && c.hitCd <= 0) {
-        damagePlayer(rel * 0.07);
+        damagePlayer(rel * 0.07 * (vKind() === 'car' && player.onScooter ? (carTune.armor ? 0.2 : 0.4) : 1));
         c.hitCd = 0.8;
         shake = Math.max(shake, 7);
         Snd.hit();
-        if (player.onScooter && rel > (vehicle === 'moped' ? 330 : 190)) knockOff('Von der Polizei gerammt!');
+        if (player.onScooter && rel > (vKind() === 'moped' ? 330 : 190)) knockOff('Von der Polizei gerammt!');
         c.speed *= 0.5;
       }
     }
@@ -1097,6 +1224,12 @@ function explosion(x, y, r, dmg, src) {
     }
   }
   if (heli && Math.hypot(heli.x - x, heli.y - y) < r + 20 && src === 'p') heli.hp -= dmg * 0.8;
+  for (const c of traffic) {
+    const d = Math.hypot(c.x - x, c.y - y);
+    if (c.dead || d >= r) continue;
+    c.hp -= dmg * (1 - d / r) * 1.4;
+    if (c.hp <= 0) destroyCiv(c, src === 'p');
+  }
   for (const p of peds) {
     const d = Math.hypot(p.x - x, p.y - y);
     if (d >= r || p.state === 'dead') continue;
@@ -1134,6 +1267,15 @@ function updateBullets(dt) {
           if (c.hp <= 0) destroyCop(c);
           break;
         }
+        if (!b.dead) for (const c of traffic) {
+          if (c.dead || !carHit(c, b.x, b.y)) continue;
+          b.dead = true;
+          if (b.rocket) { explosion(b.x, b.y, 120, b.dmg, 'p'); break; }
+          c.hp -= b.dmg; c.vmax = 520;
+          for (let i = 0; i < 3; i++) particles.push({ x: b.x, y: b.y, vx: rand(-120, 120), vy: rand(-120, 120), life: 0.2, max: 0.2, size: 2, color: '#fff', type: 'dot' });
+          if (c.hp <= 0) destroyCiv(c, true);
+          break;
+        }
         if (!b.dead) for (const p of peds) {
           if (p.state === 'dead' || Math.hypot(p.x - b.x, p.y - b.y) > 10) continue;
           b.dead = true;
@@ -1150,9 +1292,9 @@ function updateBullets(dt) {
           else { heli.hp -= b.dmg; particles.push({ x: b.x, y: b.y, vx: 0, vy: 0, life: 0.1, max: 0.1, size: 5, color: '#fff', type: 'flash', top: true }); }
           copAttacked();
         }
-      } else if (Math.hypot(player.x - b.x, player.y - b.y) < (player.onScooter ? 14 : 11)) {
+      } else if (Math.hypot(player.x - b.x, player.y - b.y) < (player.onScooter ? (vKind() === 'car' ? 20 : 14) : 11)) {
         b.dead = true;
-        damagePlayer(b.dmg);
+        damagePlayer(b.dmg * (player.onScooter && vKind() === 'car' ? (carTune.armor ? 0.35 : 0.7) : 1));
       }
     }
     if (b.rocket && !b.dead && Math.random() < 0.9) particles.push({ x: b.x, y: b.y, vx: rand(-20, 20), vy: rand(-20, 20), life: 0.5, max: 0.5, size: rand(4, 8), color: '#bbb', type: 'smoke' });
@@ -1305,7 +1447,7 @@ function updatePeds(dt) {
   for (const p of peds) {
     // Angefahren werden: Roller oder Polizeiwagen
     if (p.state !== 'ragdoll' && p.state !== 'dead' && p.state !== 'getup') {
-      if (player.onScooter && Math.abs(scooter.speed) > 70 && Math.hypot(p.x - scooter.x, p.y - scooter.y) < 17) {
+      if (player.onScooter && Math.abs(scooter.speed) > 70 && Math.hypot(p.x - scooter.x, p.y - scooter.y) < vehRadius() + 6) {
         const sp = scooter.speed;
         knockPed(p, Math.cos(scooter.angle) * sp * 0.9 + rand(-40, 40), Math.sin(scooter.angle) * sp * 0.9 + rand(-40, 40), Math.abs(sp));
         scooter.speed *= 0.75; Snd.hit(); shake = Math.max(shake, 3);
@@ -1390,34 +1532,59 @@ function updatePeds(dt) {
 // ====================================================================
 //  Werkstätten, Tuning & Autohaus
 // ====================================================================
-const UPGRADES = [
+// Fahrzeuge. Kleinstadt: E-Roller (in der Werkstatt tunebar) und E-Moped.
+// Großstadt: drei Roller-Modelle aus dem Scooter-Laden, danach E-Moped, danach Sportwagen (Tune-Shop).
+const VEH = {
+  scooter: { name: 'E-Roller', kind: 'scooter', kmh: 39, color: 0x3dd68c },
+  s1: { name: 'Stadtflitzer', kind: 'scooter', kmh: 32, color: 0x4aa3ff, price: 250, desc: 'Solider Einsteiger-Roller' },
+  s2: { name: 'Sprinter', kind: 'scooter', kmh: 38, color: 0xffd166, price: 700, desc: 'Größerer Akku, mehr Zug' },
+  s3: { name: 'Blitz X', kind: 'scooter', kmh: 44, color: 0xff5a7a, price: 1500, desc: 'Der schnellste Roller der Stadt' },
+  moped: { name: 'E-Moped', kind: 'moped', kmh: 70, price: 5000 },
+  car: { name: 'Sportwagen', kind: 'car', kmh: 90, price: 15000 },
+};
+const CITY_SCOOTERS = ['s1', 's2', 's3'];
+const UPGRADES = BIG ? [
+  { name: 'Motor-Tuning', desc: 'Stärkerer Nabenmotor', price: 300 },
+  { name: 'Hochleistungs-Akku', desc: 'Mehr Strom, mehr Dampf', price: 600 },
+  { name: 'Controller-Chip', desc: 'Drosselung raus', price: 1000 },
+] : [
   { name: 'Motor-Tuning', desc: 'Stärkerer Nabenmotor', price: 400 },
   { name: 'Hochleistungs-Akku', desc: 'Mehr Strom, mehr Dampf', price: 900 },
   { name: 'Controller-Chip', desc: 'Drosselung raus', price: 1600 },
 ];
-const MOPED_PRICE = 5000;
-let upgrades = 0, vehicle = 'scooter';
-try {
-  upgrades = clamp(parseInt(localStorage.getItem('escooter3d.upgrades'), 10) || 0, 0, 3);
-  if (localStorage.getItem('escooter3d.vehicle') === 'moped') vehicle = 'moped';
-} catch (e) {}
-function saveGarage() { try { localStorage.setItem('escooter3d.upgrades', String(upgrades)); localStorage.setItem('escooter3d.vehicle', vehicle); } catch (e) {} }
-// Tempo-Faktor je Tuning-Stufe (Grundtempo 39 km/h): 39 → 43 → 47 → 50 km/h; das E-Moped fährt 70 km/h
-const SCOOTER_MULT = [1, 43 / 39, 47 / 39, 50 / 39], MOPED_MULT = 70 / 39;
-// Gänge: [Anteil der Höchstgeschwindigkeit, Beschleunigung]. Roller 3 Gänge, E-Moped 4.
+const MOPED_PRICE = 5000, MOVE_PRICE = 10000;
+let upgrades = clamp(load('upgrades', 0) | 0, 0, 3);
+let vehicle = load('vehicle', BIG ? 'none' : 'scooter');
+let owned = load('owned', []);
+let carTune = Object.assign({ color: 0xc0392b, spoiler: false, rims: false, engine: 0, armor: false }, load('carTune', {}));
+if (!VEH[vehicle] && vehicle !== 'none') vehicle = BIG ? 'none' : 'scooter';
+function saveGarage() { save('upgrades', upgrades); save('vehicle', vehicle); save('owned', owned); save('carTune', carTune); }
+const hasVehicle = () => vehicle !== 'none';
+const vKind = () => (VEH[vehicle] || { kind: 'none' }).kind;
+// Höchstgeschwindigkeit in km/h. Roller in der Kleinstadt: 39 → 43 → 47 → 50; in der Großstadt Modell + 2 km/h je Upgrade (max. 50)
+function topKmh(id = vehicle, upg = upgrades) {
+  const v = VEH[id];
+  if (!v) return 0;
+  if (v.kind === 'scooter') return BIG ? Math.min(50, v.kmh + [0, 2, 4, 6][upg]) : [39, 43, 47, 50][upg];
+  if (v.kind === 'car') return v.kmh + 10 * carTune.engine;
+  return v.kmh;
+}
+// Gänge: [Anteil der Höchstgeschwindigkeit, Beschleunigung]. Roller 3, E-Moped 4, Auto 5.
 const GEARS = {
   scooter: [[0.45, 1.45], [0.75, 1.0], [1.0, 0.7]],
   moped: [[0.35, 1.55], [0.6, 1.2], [0.82, 0.9], [1.0, 0.7]],
+  car: [[0.25, 1.7], [0.45, 1.35], [0.65, 1.05], [0.83, 0.85], [1.0, 0.7]],
 };
-const gearsOf = () => GEARS[vehicle];
+const gearsOf = () => GEARS[vKind()] || GEARS.scooter;
 const curGear = () => Math.min(scooter.gear || 0, gearsOf().length - 1);
 function shiftGear() {
   const n = gearsOf().length;
   scooter.gear = (curGear() + 1) % n;
   Snd.shift();
 }
-function speedMult() { return vehicle === 'moped' ? MOPED_MULT : SCOOTER_MULT[upgrades]; }
-const vehicleName = () => vehicle === 'moped' ? 'E-Moped' : 'Roller';
+function speedMult() { return (topKmh() || 39) / 39; }
+const vehicleName = () => (VEH[vehicle] || { name: 'Fahrzeug' }).name;
+const vehRadius = () => vKind() === 'car' ? 17 : 11;
 
 // Die Werkstatt hat eine Einfahrt (2 × 3 Kacheln) an der Südseite; bei geschlossenem Tor ist sie Wand
 const garages = GARAGE_BLOCKS.map(b => {
@@ -1425,7 +1592,14 @@ const garages = GARAGE_BLOCKS.map(b => {
   for (let ty = y0 + 3; ty <= y0 + 5; ty++) for (let tx = x0 + 2; tx <= x0 + 3; tx++) bay.push([tx, ty]);
   return { x0, y0, bay, door: { x: (x0 + 3) * TILE, y: (y0 + 6) * TILE }, open: 0, target: 0, visited: false };
 });
-const autohaus = { x: (AUTOHAUS_BLOCK.bx * 10 + 5.5) * TILE - 50, y: (AUTOHAUS_BLOCK.by * 10 + 9.5) * TILE - 8, angle: Math.PI / 2 };
+// Verkäufer stehen auf dem südlichen Gehweg ihres Blocks
+const shopSpot = b => ({ x: (b.bx * 10 + 5.5) * TILE - 50, y: (b.by * 10 + 9.5) * TILE - 8, angle: Math.PI / 2 });
+const autohaus = shopSpot(AUTOHAUS_BLOCK);
+const scooterShop = BIG ? shopSpot(SPECIAL.scootershop) : null;
+const tuneShop = BIG ? shopSpot(SPECIAL.tuneshop) : null;
+const homeDoor = BIG ? { x: (SPECIAL.home.bx * 10 + 5.5) * TILE, y: (SPECIAL.home.by * 10 + 9) * TILE + 16 } : null;
+// Kleinstadt: Autobahn-Auffahrt Richtung Großstadt am östlichen Ende der Straße in Zeile 3
+const townExit = BIG ? null : { x: (N - 1.3) * TILE, y: (3 * 10 + 1) * TILE };
 function inBay(g, x, y) { const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE); return g.bay.some(([bx, by]) => bx === tx && by === ty); }
 function setBay(g, passable) { for (const [tx, ty] of g.bay) map[ty * N + tx] = passable ? WALK : BUILD; }
 function bayBlocked(g) { return inBay(g, player.x, player.y) || cops.some(c => !c.dead && inBay(g, c.x, c.y)); }
@@ -1438,10 +1612,22 @@ function toggleDoor(g) {
 }
 function interactCtx() {
   if (!player) return null;
+  if (indoors) {
+    for (const [k, p] of Object.entries(ROOM_POINTS)) if (dist(player, p) < 55) return k;
+    return null;
+  }
   const g = garages.find(g => dist(player, g.door) < 130);
   if (g && g.target === 0) return 'door';
   if (garages.some(g => inBay(g, player.x, player.y) && inBay(g, scooter.x, scooter.y))) return 'garage';
-  if (dist(player, autohaus) < 85 && (player.onScooter || dist(player, scooter) > 50)) return 'auto';
+  // Läden: nicht, wenn man gerade neben dem eigenen, abgestellten Fahrzeug steht (dann ist E zum Aufsteigen da)
+  const near = p => dist(player, p) < 85 && (player.onScooter || !hasVehicle() || dist(player, scooter) > 50);
+  if (near(autohaus)) return 'auto';
+  if (BIG) {
+    if (near(scooterShop)) return 'scooter';
+    if (near(tuneShop)) return 'tune';
+    if (dist(player, homeDoor) < 60) return 'home';
+    if (!player.onScooter && atms.some(m => dist(player, m) < 42)) return 'atm';
+  } else if (dist(player, townExit) < 150) return 'exit';
   if (!player.onScooter && dealers.some(d => dist(d, player) < 60)) return 'dealer';
   return null;
 }
@@ -1455,6 +1641,316 @@ function updateGarages(dt) {
     if (!sIn) g.visited = false;
     else if (!g.visited && player.onScooter && Math.abs(scooter.speed) < 50 && g.open >= 1) { g.visited = true; openMenu('garage'); }
   }
+}
+
+// ====================================================================
+//  Großstadt: Wohnung, Automaten, Umzug
+// ====================================================================
+// ---------- Wohnung: ein eigener Raum weit außerhalb der Stadt ----------
+let indoors = false;
+const IX = -6000, IY = -6000, ROOM_W = 640, ROOM_H = 416;
+// Möbel als Hindernisse [x, y, Breite, Tiefe] relativ zur Raumecke
+const ROOM_SOLIDS = [
+  [470, 16, 154, 96],   // Bett
+  [60, 250, 160, 48],   // Sofa
+  [90, 14, 120, 22],    // Fernseher
+  [110, 160, 80, 40],   // Couchtisch
+  [250, 14, 190, 38],   // Küchenzeile
+  [300, 180, 96, 64],   // Esstisch
+  [586, 290, 40, 44],   // Waffentresor
+];
+const ROOM_POINTS = { safe: { x: IX + 566, y: IY + 312 }, keys: { x: IX + 32, y: IY + 140 }, leave: { x: IX + 320, y: IY + 388 } };
+function hitsInterior(x, y, r) {
+  if (x - r < IX + 10 || x + r > IX + ROOM_W - 10 || y - r < IY + 10 || y + r > IY + ROOM_H - 10) return true;
+  for (const [sx, sy, w, h] of ROOM_SOLIDS) {
+    const cx = clamp(x, IX + sx, IX + sx + w), cy = clamp(y, IY + sy, IY + sy + h);
+    if ((x - cx) * (x - cx) + (y - cy) * (y - cy) < r * r) return true;
+  }
+  return false;
+}
+let stash = load('stash', {});
+function saveStash() { save('stash', stash); }
+function enterHome() {
+  indoors = true; robbing = null; bullets = [];
+  player.onScooter = false;
+  player.x = IX + 320; player.y = IY + 350; player.vx = player.vy = 0;
+  cam.x = player.x; cam.y = player.y; camYaw = -Math.PI / 2; lookYaw = 0;
+  showBig('ZUHAUSE', '#ffd166', 1.4);
+}
+function leaveHome() {
+  indoors = false;
+  player.x = homeDoor.x; player.y = homeDoor.y + 18;
+  // Das gewählte Fahrzeug wartet vor der Haustür
+  if (hasVehicle()) Object.assign(scooter, { x: homeDoor.x + 70, y: homeDoor.y + 62, angle: 0, speed: 0 });
+  cam.x = player.x; cam.y = player.y; camYaw = Math.PI / 2; lookYaw = 0;
+}
+
+// ---------- Automaten zum Aufbrechen ----------
+const atms = [];
+if (BIG) {
+  const rng = mulberry32(99);
+  let tries = 0;
+  while (atms.length < 26 && tries++ < 5000) {
+    const bx = Math.floor(rng() * BLOCKS), by = Math.floor(rng() * BLOCKS);
+    if (blockKind[by * BLOCKS + bx] !== 'build') continue;
+    const side = Math.floor(rng() * 4), f = 3.6 + rng() * 4.8;
+    // Der Automat steht auf dem Gehweg direkt an der Hauswand und schaut zur Straße
+    let x, y, angle;
+    if (side === 0) { x = (bx * 10 + f) * TILE; y = (by * 10 + 3) * TILE - 12; angle = -Math.PI / 2; }
+    else if (side === 1) { x = (bx * 10 + f) * TILE; y = (by * 10 + 9) * TILE + 12; angle = Math.PI / 2; }
+    else if (side === 2) { x = (bx * 10 + 3) * TILE - 12; y = (by * 10 + f) * TILE; angle = Math.PI; }
+    else { x = (bx * 10 + 9) * TILE + 12; y = (by * 10 + f) * TILE; angle = 0; }
+    const p = { x, y };
+    if (atms.some(m => dist(m, p) < 520) || dealers.some(d => dist(d, p) < 200)) continue;
+    atms.push({ x, y, angle, type: rng() < 0.4 ? 'atm' : 'snack', cool: 0 });
+  }
+}
+let robbing = null;
+function startRob(m) {
+  if (!m) return;
+  if (m.cool > 0) { toast('Der Automat ist leer – komm später wieder.', '#ffb347'); return; }
+  robbing = { m, t: 0, dur: m.type === 'atm' ? 4 : 2.5 };
+  toast(m.type === 'atm' ? 'Du knackst den Geldautomaten …' : 'Du brichst den Snackautomaten auf …', '#ffd166');
+}
+function updateRob(dt) {
+  for (const m of atms) if (m.cool > 0) m.cool -= dt;
+  if (!robbing) return;
+  if (player.onScooter || dist(player, robbing.m) > 55) { robbing = null; toast('Aufbrechen abgebrochen.', '#ffb347'); return; }
+  robbing.t += dt;
+  if (Math.random() < dt * 5) Snd.clank();
+  if (robbing.t < robbing.dur) return;
+  const m = robbing.m, atm = m.type === 'atm';
+  robbing = null;
+  addMoney(Math.round(atm ? rand(120, 260) : rand(35, 90)), m.x, m.y);
+  m.cool = 180;
+  for (let i = 0; i < 10; i++) particles.push({ x: m.x, y: m.y, vx: rand(-120, 120), vy: rand(-120, 120), life: 0.4, max: 0.4, size: 2, color: '#ffd166', type: 'dot' });
+  // Stiller Alarm: Geldautomaten melden sich öfter als Snackautomaten
+  if (Math.random() < (atm ? 0.55 : 0.25)) setWanted(Math.max(1, wanted), 'Alarm! Die Polizei ist unterwegs.');
+  else toast('Geschafft – kein Alarm.', '#7ee08a');
+}
+
+// ---------- Umzug in die Großstadt (nur Kleinstadt) ----------
+function tryMove() {
+  if (vehicle !== 'moped') { toast('Für den Umzug brauchst du das E-Moped.', '#ffb347'); return; }
+  if (money < MOVE_PRICE) { toast(`Für den Umzug brauchst du ${fmtMoney(MOVE_PRICE)}.`, '#ffb347'); return; }
+  if (wanted > 0) { toast('Erst die Polizei abschütteln!', '#ff6b6b'); return; }
+  openMenu('move');
+}
+function startMove() {
+  shopEl.hidden = true;
+  state = 'cutscene';
+  const el = document.getElementById('cutscene'), log = document.getElementById('cutLog'), btn = document.getElementById('cutBtn');
+  el.hidden = false; log.innerHTML = ''; btn.hidden = true;
+  const steps = [
+    ['Du fährst mit dem E-Moped auf die Autobahn Richtung Großstadt …', ''],
+    ['Blaulicht im Rückspiegel. Polizeikontrolle!', 'warn'],
+    ['„Ein E-Moped ohne Kennzeichen auf der Autobahn? Und woher kommt das ganze Bargeld?“', ''],
+    ['Das E-Moped und dein Geld werden beschlagnahmt. Du wirst verhaftet.', 'warn'],
+    ['Haft: Tag 1 … Tag 2 … Tag 3.', 'jail'],
+    ['Entlassen! Mit leeren Taschen stehst du vor dem Gefängnis – mitten in der Großstadt.', 'ok'],
+  ];
+  steps.forEach(([t, cls], i) => setTimeout(() => {
+    const p = document.createElement('p');
+    p.textContent = t; if (cls) p.className = cls;
+    log.appendChild(p);
+    if (cls === 'warn') Snd.star();
+    if (i === steps.length - 1) btn.hidden = false;
+  }, 700 + i * 1500));
+}
+function finishMove() {
+  // Frischer Großstadt-Spielstand: kein Geld, keine Fahrzeuge, leerer Tresor
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith(SAVE + 'city.')) localStorage.removeItem(k);
+    localStorage.setItem(SAVE + 'world', 'city');
+    localStorage.setItem(SAVE + 'city.fresh', 'true');
+  } catch (e) {}
+  location.hash = 'grossstadt';
+  location.reload();
+}
+
+// Käufe aus den Großstadt- und Wohnungs-Menüs; true, wenn der Knopf hier behandelt wurde
+function handleCityBuy(id) {
+  const spot = () => menuKind === 'auto' ? autohaus : menuKind === 'tune' ? tuneShop : scooterShop;
+  // Neues oder gewähltes Fahrzeug steht auf der Straße vor dem Laden
+  const park = () => { if (!indoors) Object.assign(scooter, { x: spot().x + 150, y: spot().y + 72, angle: 0, speed: 0 }); };
+  if (id.startsWith('veh:')) {
+    const v = id.slice(4);
+    addMoney(-VEH[v].price);
+    owned.push(v); vehicle = v; scooter.gear = 0; player.onScooter = false; park();
+    toast(`${VEH[v].name} gekauft! Er steht vor dem Laden.`, '#7ee08a');
+  } else if (id.startsWith('use:')) {
+    vehicle = id.slice(4); scooter.gear = 0; player.onScooter = false; park();
+    toast(indoors ? `Der ${vehicleName()} wartet vor der Haustür.` : `Der ${vehicleName()} steht bereit.`, '#7ee08a');
+  } else if (id.startsWith('paint:')) { addMoney(-400); carTune.color = +id.slice(6); }
+  else if (id === 'spoiler') { addMoney(-1200); carTune.spoiler = true; }
+  else if (id === 'rims') { addMoney(-900); carTune.rims = true; }
+  else if (id === 'engine') { addMoney(-[2500, 5000, 9000][carTune.engine]); carTune.engine++; toast(`Motor getunt – jetzt ${topKmh('car')} km/h!`, '#7ee08a'); }
+  else if (id === 'armorcar') { addMoney(-4000); carTune.armor = true; }
+  else if (id.startsWith('store:')) {
+    const w = id.slice(6);
+    stash[w] = (stash[w] || 0) + player.ammo[w]; delete player.ammo[w];
+    if (player.weapon === w) player.weapon = 'fists';
+    saveStash(); Snd.pickup(); return true;
+  } else if (id.startsWith('take:')) {
+    const w = id.slice(5);
+    player.ammo[w] = (player.ammo[w] || 0) + stash[w]; delete stash[w]; player.weapon = w;
+    saveStash(); Snd.pickup(); return true;
+  } else if (id === 'move') { startMove(); return true; }
+  else return false;
+  saveGarage(); rebuildPlayerCar(); Snd.cash();
+  return true;
+}
+
+// ====================================================================
+//  Verkehr: NPC-Autos mit Rechtsverkehr; sie halten an roten Ampeln,
+//  hinter anderen Autos und vor Fußgängern
+// ====================================================================
+const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // 0 Ost, 1 Süd, 2 West, 3 Nord
+const CIV_COLORS = [0xc0392b, 0x2e86de, 0xf1c40f, 0xecf0f1, 0x2c3e50, 0x27ae60, 0x8e44ad, 0x95a5a6, 0xe67e22];
+const inGrid = (ix, iy) => ix >= 0 && iy >= 0 && ix <= BLOCKS && iy <= BLOCKS;
+// Spurmitte: nach Osten und Norden fährt man auf der südlichen bzw. östlichen Hälfte
+function laneOf(d, line) { return (line * 10 + ((d === 0 || d === 3) ? 1.5 : 0.5)) * TILE; }
+function stopPoint(d, ix, iy) {
+  if (d === 0) return { x: (ix * 10 - 1) * TILE - 6, y: laneOf(0, iy) };
+  if (d === 2) return { x: (ix * 10 + 3) * TILE + 6, y: laneOf(2, iy) };
+  if (d === 1) return { x: laneOf(1, ix), y: (iy * 10 - 1) * TILE - 6 };
+  return { x: laneOf(3, ix), y: (iy * 10 + 3) * TILE + 6 };
+}
+function exitPoint(d, ix, iy) {
+  if (d === 0) return { x: (ix * 10 + 3) * TILE + 6, y: laneOf(0, iy) };
+  if (d === 2) return { x: (ix * 10 - 1) * TILE - 6, y: laneOf(2, iy) };
+  if (d === 1) return { x: laneOf(1, ix), y: (iy * 10 + 3) * TILE + 6 };
+  return { x: laneOf(3, ix), y: (iy * 10 - 1) * TILE - 6 };
+}
+function cornerPoint(d, d2, ix, iy) {
+  return d % 2 === 0 ? { x: laneOf(d2, ix), y: laneOf(d, iy) } : { x: laneOf(d, ix), y: laneOf(d2, iy) };
+}
+let traffic = [], trafficFill = 0;
+function spawnTraffic(anywhere) {
+  const pix = Math.round(player.x / TILE / 10), piy = Math.round(player.y / TILE / 10);
+  for (let i = 0; i < 20; i++) {
+    const ix = clamp(pix + Math.floor(rand(-3, 4)), 0, BLOCKS), iy = clamp(piy + Math.floor(rand(-3, 4)), 0, BLOCKS);
+    const d = Math.floor(Math.random() * 4), [dx, dy] = DIRS[d];
+    if (!inGrid(ix - dx, iy - dy)) continue;
+    const sp = stopPoint(d, ix, iy), back = rand(40, 6 * TILE);
+    const x = sp.x - dx * back, y = sp.y - dy * back;
+    const dP = Math.hypot(x - player.x, y - player.y);
+    if (dP > 1700 || dP < (anywhere ? 200 : 700) || (!anywhere && onScreen(x, y, 40))) continue;
+    if (traffic.some(c => Math.hypot(c.x - x, c.y - y) < 90)) continue;
+    const van = Math.random() < 0.25;
+    traffic.push({
+      x, y, angle: Math.atan2(dy, dx), speed: rand(120, 260), d, nd: d, ix, iy, path: null, hp: van ? 140 : 100, van,
+      color: Math.floor(Math.random() * CIV_COLORS.length), vmax: rand(320, 410), honkT: 0, hitCd: 0, dead: false,
+    });
+    return;
+  }
+}
+function obstacleAhead(c, fx, fy) {
+  let best = 1e9;
+  const test = (x, y, rad) => {
+    const rx = x - c.x, ry = y - c.y, along = rx * fx + ry * fy;
+    if (along <= 0 || along > 160) return;
+    if (Math.abs(rx * fy - ry * fx) < rad) best = Math.min(best, along);
+  };
+  for (const o of traffic) if (o !== c && !o.dead) test(o.x, o.y, 18);
+  for (const o of cops) if (!o.dead) test(o.x, o.y, 20);
+  for (const p of peds) if (p.state !== 'dead') test(p.x, p.y, 16);
+  test(player.x, player.y, player.onScooter && vKind() === 'car' ? 24 : 18);
+  return best;
+}
+function destroyCiv(c, byPlayer) {
+  if (c.dead) return;
+  c.dead = true;
+  wrecks.push({ x: c.x, y: c.y, angle: c.angle, t: 30 });
+  explosion(c.x, c.y, 100, 60, 'civ');
+  if (byPlayer) setWanted(Math.max(1, wanted), 'Auto in die Luft gejagt!');
+}
+function updateTraffic(dt) {
+  const want = BIG ? (LOW_GFX ? 14 : 24) : (LOW_GFX ? 6 : 10);
+  if (traffic.length < want) spawnTraffic(trafficFill > 0);
+  for (const c of traffic) {
+    if (c.dead) continue;
+    c.hitCd -= dt;
+    const fx = Math.cos(c.angle), fy = Math.sin(c.angle);
+    let target = null, targetSp = c.vmax;
+    if (!c.path) {
+      const sp = stopPoint(c.d, c.ix, c.iy);
+      target = sp;
+      const dStop = (sp.x - c.x) * DIRS[c.d][0] + (sp.y - c.y) * DIRS[c.d][1];
+      const L = lightPhase(c.ix, c.iy)[c.d % 2 === 0 ? 'ew' : 'ns'];
+      const mustStop = L === 'r' || (L === 'y' && dStop > 45);
+      if (mustStop) targetSp = Math.min(targetSp, Math.max(0, (dStop - 4) * 2.2));
+      if (dStop < 8) {
+        if (mustStop) { c.speed = 0; target = null; }
+        else {
+          // Richtung an der Kreuzung wählen: nicht wenden, nicht aus der Stadt hinaus
+          const opts = [0, 1, 2, 3].filter(d2 => d2 !== (c.d + 2) % 4 && inGrid(c.ix + DIRS[d2][0], c.iy + DIRS[d2][1]));
+          const d2 = opts.includes(c.d) && Math.random() < 0.55 ? c.d : pick(opts);
+          c.nd = d2;
+          c.path = d2 === c.d ? [exitPoint(d2, c.ix, c.iy)] : [cornerPoint(c.d, d2, c.ix, c.iy), exitPoint(d2, c.ix, c.iy)];
+        }
+      }
+    }
+    if (c.path) {
+      target = c.path[0];
+      if (c.nd !== c.d) targetSp = Math.min(targetSp, 170);
+      const tx = target.x - c.x, ty = target.y - c.y;
+      if (Math.hypot(tx, ty) < 22 || tx * fx + ty * fy < 0) {
+        c.path.shift();
+        if (!c.path.length) { c.path = null; c.d = c.nd; c.ix += DIRS[c.d][0]; c.iy += DIRS[c.d][1]; }
+      }
+    }
+    const ahead = obstacleAhead(c, fx, fy);
+    if (ahead < 1e9) targetSp = Math.min(targetSp, Math.max(0, (ahead - 40) * 2.5));
+    // Hupen, wenn der Spieler im Weg steht
+    const pd = Math.hypot(player.x - c.x, player.y - c.y);
+    if (ahead < 80 && pd < 100 && c.speed < 20) {
+      c.honkT += dt;
+      if (c.honkT > 1.2) { c.honkT = -rand(1.5, 3); Snd.honk(clamp(1 - pd / 600, 0.2, 1)); }
+    }
+    c.speed = approach(c.speed, targetSp, (c.speed < targetSp ? 170 : 650) * dt);
+    if (target) {
+      const d = angDiff(c.angle, Math.atan2(target.y - c.y, target.x - c.x));
+      const turn = 2.8 * dt * Math.min(1, c.speed / 60 + 0.2);
+      c.angle += clamp(d, -turn, turn);
+    }
+    c.x += Math.cos(c.angle) * c.speed * dt; c.y += Math.sin(c.angle) * c.speed * dt;
+    // Fußgänger, die trotzdem erwischt werden
+    if (c.speed > 60) for (const p of peds) {
+      if (p.state !== 'ragdoll' && p.state !== 'dead' && p.state !== 'getup' && carHit(c, p.x, p.y, 4)) knockPed(p, fx * c.speed, fy * c.speed, c.speed);
+    }
+    // Zusammenstoß mit dem Spieler
+    const ent = player.onScooter ? scooter : player, car = player.onScooter && vKind() === 'car';
+    const R = 20 + (player.onScooter ? (car ? 24 : 14) : 10);
+    const dd = Math.hypot(ent.x - c.x, ent.y - c.y);
+    if (dd < R && dd > 0.01) {
+      const nx = (ent.x - c.x) / dd, ny = (ent.y - c.y) / dd;
+      const rel = Math.abs((fx * c.speed - player.vx) * nx + (fy * c.speed - player.vy) * ny);
+      moveEntity(ent, nx * (R - dd) * 0.7, ny * (R - dd) * 0.7, player.onScooter ? vehRadius() : 10);
+      c.x -= nx * (R - dd) * 0.3; c.y -= ny * (R - dd) * 0.3;
+      if (player.onScooter) { player.x = scooter.x; player.y = scooter.y; }
+      if (rel > 120 && c.hitCd <= 0) {
+        c.hitCd = 1; c.speed *= 0.3;
+        Snd.hit(); shake = Math.max(shake, 5);
+        if (car) { damagePlayer(rel * 0.012 * (carTune.armor ? 0.5 : 1)); c.hp -= rel * 0.15; if (c.hp <= 0) destroyCiv(c, false); }
+        else {
+          damagePlayer(rel * 0.05);
+          if (player.onScooter && rel > (vKind() === 'moped' ? 330 : 200)) knockOff('Mit einem Auto zusammengestoßen!');
+        }
+      }
+    }
+  }
+  // Autos voneinander trennen (Verkehr untereinander und mit der Polizei)
+  const all = traffic.filter(c => !c.dead).concat(cops.filter(c => !c.dead));
+  for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+    const a = all[i], b = all[j], dd = Math.hypot(a.x - b.x, a.y - b.y);
+    if (dd >= 40 || dd < 0.01 || (a.field && b.field)) continue;
+    const push = (40 - dd) / 2, nx = (b.x - a.x) / dd, ny = (b.y - a.y) / dd;
+    if (a.field) moveEntity(a, -nx * push, -ny * push, 17); else { a.x -= nx * push; a.y -= ny * push; }
+    if (b.field) moveEntity(b, nx * push, ny * push, 17); else { b.x += nx * push; b.y += ny * push; }
+  }
+  traffic = traffic.filter(c => !c.dead && c.x > -300 && c.y > -300 && c.x < N * TILE + 300 && c.y < N * TILE + 300 &&
+    (Math.hypot(c.x - player.x, c.y - player.y) < 2100 || onScreen(c.x, c.y, 40)));
 }
 
 // ====================================================================
@@ -1482,27 +1978,100 @@ function renderMenu() {
   if (menuKind === 'garage') {
     title.textContent = 'WERKSTATT';
     let html = '';
-    if (vehicle === 'moped') {
-      sub.textContent = 'Dein E-Moped ist schon voll ausgestattet.';
-      html = `<div class="item"><div><b>E-Moped</b><small>Höchstgeschwindigkeit ${kmh(speedMult())} km/h</small></div><button disabled>Fertig getunt</button></div>`;
+    if (vKind() !== 'scooter') {
+      sub.textContent = hasVehicle() ? `Hier werden nur Roller getunt. Dein ${vehicleName()} fährt ${topKmh()} km/h.` : 'Du hast kein Fahrzeug.';
+      html = hasVehicle() ? `<div class="item"><div><b>${vehicleName()}</b><small>Höchstgeschwindigkeit ${topKmh()} km/h</small></div><button disabled>Nur für Roller</button></div>` : '';
     } else {
-      sub.textContent = `Dein Roller: ${kmh(speedMult())} km/h Spitze. Voll getunt fährt er 50 km/h.`;
+      sub.textContent = `Dein ${vehicleName()}: ${topKmh()} km/h Spitze. Mehr als 50 km/h sind für Roller nicht drin.`;
       UPGRADES.forEach((u, i) => {
         const done = i < upgrades, next = i === upgrades;
         const label = done ? 'Eingebaut ✓' : next ? `Einbauen · ${fmtMoney(u.price)}` : `Erst Stufe ${i}`;
-        html += `<div class="item${next ? ' cur' : ''}"><div><b>Stufe ${i + 1}: ${u.name}</b><small>${u.desc} · → ${kmh(SCOOTER_MULT[i + 1])} km/h</small></div>
+        html += `<div class="item${next ? ' cur' : ''}"><div><b>Stufe ${i + 1}: ${u.name}</b><small>${u.desc} · → ${topKmh(vehicle, i + 1)} km/h</small></div>
           <button class="${next ? 'buy' : ''}" data-buy="upg" ${!next || money < u.price ? 'disabled' : ''}>${label}</button></div>`;
       });
-      if (upgrades >= 3) html += `<div class="item"><div><b>Voll getunt!</b><small>Im Autohaus (A auf der Karte) wartet jetzt das E-Moped.</small></div><button disabled>${fmtMoney(MOPED_PRICE)}</button></div>`;
+      if (upgrades >= 3 && !BIG) html += `<div class="item"><div><b>Voll getunt!</b><small>Im Autohaus (A auf der Karte) wartet jetzt das E-Moped.</small></div><button disabled>${fmtMoney(MOPED_PRICE)}</button></div>`;
     }
     shopList.innerHTML = html;
+    return;
+  }
+  // ---------- Großstadt- und Wohnungs-Menüs ----------
+  const row = (name, info, btn, cur) => `<div class="item${cur ? ' cur' : ''}"><div><b>${name}</b><small>${info}</small></div>${btn}</div>`;
+  const buyBtn = (key, price, label = 'Kaufen', lock = '') => lock ? `<button disabled>${lock}</button>`
+    : `<button class="buy" data-buy="${key}" ${money < price ? 'disabled' : ''}>${label} · ${fmtMoney(price)}</button>`;
+  const useBtn = id => vehicle === id ? '<button disabled>Aktiv ✓</button>' : `<button data-buy="use:${id}">Fahren</button>`;
+  if (menuKind === 'scooter') {
+    title.textContent = 'SCOOTER-LADEN';
+    sub.textContent = 'Kauf dir einen Roller. Hast du alle drei, gibt es hier das E-Moped.';
+    const nScoot = CITY_SCOOTERS.filter(id => owned.includes(id)).length;
+    let html = CITY_SCOOTERS.map(id => row(VEH[id].name, `${VEH[id].desc} · ${topKmh(id)} km/h`,
+      owned.includes(id) ? useBtn(id) : buyBtn('veh:' + id, VEH[id].price), vehicle === id)).join('');
+    html += row('E-Moped', `Schneller und stabiler als jeder Roller · ${topKmh('moped')} km/h`,
+      owned.includes('moped') ? useBtn('moped') : buyBtn('veh:moped', VEH.moped.price, 'Kaufen', nScoot < 3 ? `Erst alle 3 Roller (${nScoot}/3)` : ''), vehicle === 'moped');
+    shopList.innerHTML = html;
+    return;
+  }
+  if (menuKind === 'auto' && BIG) {
+    title.textContent = 'AUTOHAUS';
+    sub.textContent = 'Sportwagen: 5 Gänge, schützt dich besser und lässt sich im Tune-Shop lackieren und tunen.';
+    const ready = owned.includes('moped');
+    shopList.innerHTML = row('Sportwagen', `${topKmh('car')} km/h Spitze`,
+      owned.includes('car') ? useBtn('car') : buyBtn('veh:car', VEH.car.price, 'Kaufen', ready ? '' : 'Erst das E-Moped (Scooter-Laden)'), !owned.includes('car') && ready);
+    return;
+  }
+  if (menuKind === 'tune') {
+    title.textContent = 'TUNE SHOP';
+    if (!owned.includes('car')) {
+      sub.textContent = 'Erst brauchst du ein Auto – das gibt es im Autohaus (A auf der Karte).';
+      shopList.innerHTML = '';
+      return;
+    }
+    sub.textContent = `Dein Sportwagen fährt ${topKmh('car')} km/h.`;
+    const PAINTS = [[0xc0392b, 'Rennrot'], [0x1f5fc8, 'Racing-Blau'], [0xf1c40f, 'Gelb'], [0x16181b, 'Mattschwarz'], [0xecf0f1, 'Perlweiß'], [0x27ae60, 'Grün'], [0xff4fd8, 'Neon-Pink']];
+    let html = `<div class="item"><div><b>Lackierung</b><small>${fmtMoney(400)} pro Farbe</small></div><div class="swatches">` +
+      PAINTS.map(([c, n]) => `<button class="swatch${carTune.color === c ? ' on' : ''}" title="${n}" aria-label="${n}" style="background:#${c.toString(16).padStart(6, '0')}" data-buy="paint:${c}" ${carTune.color === c || money < 400 ? 'disabled' : ''}></button>`).join('') + '</div></div>';
+    const opt = (key, name, info, price, done) => row(name, info, done ? '<button disabled>Eingebaut ✓</button>' : buyBtn(key, price, 'Einbauen'));
+    html += opt('spoiler', 'Heckspoiler', 'Sieht schnell aus', 1200, carTune.spoiler);
+    html += opt('rims', 'Goldfelgen', 'Glänzen in der Sonne', 900, carTune.rims);
+    html += carTune.engine < 3
+      ? opt('engine', `Motor Stufe ${carTune.engine + 1}`, `+10 km/h → ${topKmh('car') + 10} km/h`, [2500, 5000, 9000][carTune.engine], false)
+      : opt('engine', 'Motor', `Voll getunt: ${topKmh('car')} km/h`, 0, true);
+    html += opt('armorcar', 'Panzerung', 'Im Auto nimmst du nur halb so viel Schaden', 4000, carTune.armor);
+    if (vehicle !== 'car') html += row('Sportwagen fahren', 'Er wird vor den Laden gestellt', '<button data-buy="use:car">Fahren</button>');
+    shopList.innerHTML = html;
+    return;
+  }
+  if (menuKind === 'safe') {
+    title.textContent = 'WAFFENTRESOR';
+    sub.textContent = 'Im Tresor sind Waffen sicher. Nimmst du eine mit und stirbst oder wirst verhaftet, ist sie weg.';
+    let html = '';
+    for (const id of WEAPON_ORDER.slice(1)) {
+      const inv = player.ammo[id] !== undefined, st = stash[id] !== undefined;
+      if (!inv && !st) continue;
+      const info = [inv ? `Dabei: ${player.ammo[id]} Schuss` : '', st ? `Im Tresor: ${stash[id]} Schuss` : ''].filter(Boolean).join(' · ');
+      html += row(WEAPONS[id].name, info, `<div class="btns">${inv ? `<button data-buy="store:${id}">Einlagern</button>` : ''}${st ? `<button class="buy" data-buy="take:${id}">Mitnehmen</button>` : ''}</div>`);
+    }
+    shopList.innerHTML = html || row('Der Tresor ist leer', 'Waffen gibt es beim Dealer ($ auf der Karte).', '');
+    return;
+  }
+  if (menuKind === 'keys') {
+    title.textContent = 'SCHLÜSSELBRETT';
+    sub.textContent = 'Welches Fahrzeug soll vor der Haustür stehen?';
+    shopList.innerHTML = owned.length
+      ? owned.map(id => row(VEH[id].name, `${topKmh(id)} km/h`, vehicle === id ? '<button disabled>Gewählt ✓</button>' : `<button data-buy="use:${id}">Nehmen</button>`, vehicle === id)).join('')
+      : row('Noch keine Fahrzeuge', 'Im Scooter-Laden (S auf der Karte) gibt es Roller.', '');
+    return;
+  }
+  if (menuKind === 'move') {
+    title.textContent = 'UMZUG';
+    sub.textContent = 'Ab in die Großstadt! Die Kleinstadt lässt du hinter dir.';
+    shopList.innerHTML = row('Mit dem E-Moped in die Großstadt', `Du hast ${fmtMoney(money)} dabei.`, '<button class="buy" data-buy="move">Losfahren</button>', true);
     return;
   }
   if (menuKind === 'auto') {
     title.textContent = 'AUTOHAUS';
     sub.textContent = 'E-Moped: schneller als jeder getunte Roller, stabiler bei Crashs und Rammstößen.';
     const owned = vehicle === 'moped', ready = upgrades >= 3;
-    const info = owned ? 'Gehört dir schon' : ready ? `Spitze ${kmh(MOPED_MULT)} km/h` : `Erst alle 3 Upgrades in der Werkstatt (${upgrades}/3)`;
+    const info = owned ? 'Gehört dir schon' : ready ? `Spitze ${topKmh('moped')} km/h` : `Erst alle 3 Upgrades in der Werkstatt (${upgrades}/3)`;
     shopList.innerHTML = `<div class="item${ready && !owned ? ' cur' : ''}"><div><b>E-Moped</b><small>${info}</small></div>
       <button class="buy" data-buy="moped" ${owned || !ready || money < MOPED_PRICE ? 'disabled' : ''}>${owned ? 'Gekauft ✓' : 'Kaufen · ' + fmtMoney(MOPED_PRICE)}</button></div>`;
     return;
@@ -1527,10 +2096,11 @@ shopList.addEventListener('click', e => {
   const b = e.target.closest('button[data-buy]');
   if (!b || b.disabled) return;
   const id = b.dataset.buy;
+  if (handleCityBuy(id)) { renderMenu(); return; }
   if (id === 'upg') {
     addMoney(-UPGRADES[upgrades].price);
     upgrades++; saveGarage();
-    toast(`${UPGRADES[upgrades - 1].name} eingebaut – jetzt ${kmh(speedMult())} km/h!`, '#7ee08a');
+    toast(`${UPGRADES[upgrades - 1].name} eingebaut – jetzt ${topKmh()} km/h!`, '#7ee08a');
   } else if (id === 'moped') {
     addMoney(-MOPED_PRICE);
     vehicle = 'moped'; saveGarage();
@@ -1576,6 +2146,7 @@ function frame(now) {
   if (state === 'shop' && (pressed.Escape || pressed.KeyE)) closeShop();
   else if (state === 'shop') time += dt;
   if (state === 'play') update(dt);
+  else if (state === 'cutscene') time += dt;
   else if (state === 'wasted' || state === 'busted') {
     endTimer += dt;
     time += dt;
@@ -1599,14 +2170,19 @@ function frame(now) {
 function update(dt) {
   time += dt;
   if (wanted > 0) stats.time += dt;
+  trafficFill = Math.max(0, trafficFill - dt);
   updatePlayer(dt);
-  updateCops(dt);
-  updatePeds(dt);
-  updateGarages(dt);
-  updateHeli(dt);
-  updateBullets(dt);
-  updatePickups(dt);
-  updateWanted(dt);
+  if (!indoors) {
+    updateCops(dt);
+    updatePeds(dt);
+    updateTraffic(dt);
+    updateGarages(dt);
+    updateHeli(dt);
+    updateBullets(dt);
+    updatePickups(dt);
+    updateWanted(dt);
+  }
+  updateRob(dt);
   updateParticles(dt);
   if (bigMsg) { bigMsg.t -= dt; if (bigMsg.t <= 0) bigMsg = null; }
   for (const t of toasts) t.t -= dt;
@@ -1723,34 +2299,41 @@ function drawHUD() {
   // Minikarte
   const ms = touchMode ? Math.min(120, W * 0.22) : Math.min(200, W * 0.28), mx = 16, my = touchMode ? 16 : H - ms - 36;
   ctx.fillStyle = 'rgba(0,0,0,.6)'; rrect(mx - 4, my - 4, ms + 8, ms + 36, 8); ctx.fill();
-  ctx.drawImage(miniCv, mx, my, ms, ms);
-  const k = ms / (N * TILE);
+  const span = BIG ? 44 * TILE : N * TILE, ref = indoors ? homeDoor : player;
+  const vx0 = BIG ? clamp(ref.x - span / 2, 0, N * TILE - span) : 0, vy0 = BIG ? clamp(ref.y - span / 2, 0, N * TILE - span) : 0;
+  const k = ms / span, P = (x, y) => [mx + (x - vx0) * k, my + (y - vy0) * k];
+  ctx.drawImage(miniCv, vx0 / TILE * 3, vy0 / TILE * 3, span / TILE * 3, span / TILE * 3, mx, my, ms, ms);
   ctx.save(); ctx.beginPath(); ctx.rect(mx, my, ms, ms); ctx.clip();
+  const dot = (x, y, r, col) => { const [px, py] = P(x, y); ctx.fillStyle = col; ctx.beginPath(); ctx.arc(px, py, r, 0, TAU); ctx.fill(); return [px, py]; };
   if (wanted > 0 && !seen) {
+    const [cx, cy] = P(lastKnown.x, lastKnown.y);
     ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.fillStyle = 'rgba(255,60,60,.15)'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(mx + lastKnown.x * k, my + lastKnown.y * k, searchRadius() * k, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, searchRadius() * k, 0, TAU); ctx.fill(); ctx.stroke();
   }
   for (const p of pickups) if (!p.taken) {
+    const [px, py] = P(p.x, p.y);
     ctx.fillStyle = p.type === 'health' ? '#3dd68c' : p.type === 'armor' ? '#4aa3ff' : '#ffd166';
-    ctx.fillRect(mx + p.x * k - 1.5, my + p.y * k - 1.5, 3, 3);
+    ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
   }
-  if (!player.onScooter) { ctx.fillStyle = '#3dd68c'; ctx.beginPath(); ctx.arc(mx + scooter.x * k, my + scooter.y * k, 3.5, 0, TAU); ctx.fill(); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke(); }
-  for (const c of cops) {
-    ctx.fillStyle = c.chase ? ((time * 6 + c.flash) % 2 < 1 ? '#3b8bff' : '#ff3344') : '#8ab4ff';
-    ctx.beginPath(); ctx.arc(mx + c.x * k, my + c.y * k, 3.5, 0, TAU); ctx.fill();
-  }
-  ctx.font = 'bold 13px Impact, Arial Black, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  for (const [p, c, t] of [...garages.map(g => [g.door, '#ffb347', 'W']), [autohaus, '#6fc3ff', 'A']]) {
-    ctx.fillStyle = '#1b1f27'; ctx.beginPath(); ctx.arc(mx + p.x * k, my + p.y * k, 6.5, 0, TAU); ctx.fill();
-    ctx.fillStyle = c; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.fillText(t, mx + p.x * k, my + p.y * k + 0.5);
+  for (const m of atms) { const [px, py] = P(m.x, m.y); ctx.fillStyle = m.cool > 0 ? '#555' : '#e6c34a'; ctx.fillRect(px - 2, py - 2, 4, 4); }
+  if (hasVehicle() && !player.onScooter) { dot(scooter.x, scooter.y, 3.5, '#3dd68c'); ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke(); }
+  for (const c of cops) dot(c.x, c.y, 3.5, c.chase ? ((time * 6 + c.flash) % 2 < 1 ? '#3b8bff' : '#ff3344') : '#8ab4ff');
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const pois = garages.map(g => [g.door, '#ffb347', 'W']).concat(BIG
+    ? [[autohaus, '#6fc3ff', 'A'], [scooterShop, '#3dd68c', 'S'], [tuneShop, '#ff4fd8', 'T'], [homeDoor, '#ffd166', '⌂']]
+    : [[autohaus, '#6fc3ff', 'A'], [townExit, '#8ab4ff', '→']]);
+  for (const [p, c, t] of pois) {
+    const [px, py] = dot(p.x, p.y, 6.5, '#1b1f27');
+    ctx.fillStyle = c; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.fillText(t, px, py + 0.5);
   }
   ctx.font = 'bold 13px Impact, Arial Black, sans-serif';
   for (const d of dealers) {
-    ctx.fillStyle = '#0c2a16'; ctx.beginPath(); ctx.arc(mx + d.x * k, my + d.y * k, 6, 0, TAU); ctx.fill();
-    ctx.fillStyle = '#7ee08a'; ctx.fillText('$', mx + d.x * k, my + d.y * k + 0.5);
+    const [px, py] = dot(d.x, d.y, 6, '#0c2a16');
+    ctx.fillStyle = '#7ee08a'; ctx.fillText('$', px, py + 0.5);
   }
-  if (heli) { ctx.fillStyle = '#ff3344'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('H', mx + heli.x * k, my + heli.y * k); }
-  ctx.save(); ctx.translate(mx + player.x * k, my + player.y * k); ctx.rotate(player.onScooter ? scooter.angle : player.aim);
+  if (heli) { const [px, py] = P(heli.x, heli.y); ctx.fillStyle = '#ff3344'; ctx.font = 'bold 12px sans-serif'; ctx.fillText('H', px, py); }
+  const [ppx, ppy] = P(ref.x, ref.y);
+  ctx.save(); ctx.translate(ppx, ppy); ctx.rotate(indoors ? -Math.PI / 2 : player.onScooter ? scooter.angle : player.aim);
   ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(7, 0); ctx.lineTo(-5, -5); ctx.lineTo(-2, 0); ctx.lineTo(-5, 5); ctx.closePath(); ctx.fill();
   ctx.restore();
   ctx.restore();
@@ -1825,6 +2408,18 @@ function drawHUD() {
     ctx.fillText('Festnahme… fahr weg!', W / 2, H * 0.62 + 12);
   }
 
+  if (robbing) {
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; rrect(W / 2 - 110, H * 0.62, 220, 36, 8); ctx.fill();
+    ctx.fillStyle = '#ffd166'; ctx.fillRect(W / 2 - 100, H * 0.62 + 24, 200 * Math.min(1, robbing.t / robbing.dur), 6);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 13px system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(robbing.m.type === 'atm' ? 'Geldautomat knacken … bleib stehen' : 'Automat aufbrechen … bleib stehen', W / 2, H * 0.62 + 12);
+  }
+  if (indoors) {
+    ctx.font = 'bold 13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; rrect(W / 2 - 70, 8, 140, 26, 8); ctx.fill();
+    ctx.fillStyle = '#ffd166'; ctx.fillText('ZUHAUSE · Downtown', W / 2, 21);
+  }
+
   // Hinweise und Meldungen
   drawTouchControls();
   if (hint && state === 'play') {
@@ -1852,7 +2447,7 @@ function drawHUD() {
   }
 
   // Fadenkreuz
-  if (state === 'play' && w.dmg && !touchMode) {
+  if (state === 'play' && w.dmg && !touchMode && !indoors) {
     ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(mouse.x, mouse.y, 10, 0, TAU);
     ctx.moveTo(mouse.x - 16, mouse.y); ctx.lineTo(mouse.x - 6, mouse.y); ctx.moveTo(mouse.x + 6, mouse.y); ctx.lineTo(mouse.x + 16, mouse.y);
@@ -1958,6 +2553,38 @@ function canvasTex(w, h, draw) {
   return t;
 }
 
+// ---------- Statische Geometrie bündeln (weniger Draw-Calls in der großen Stadt) ----------
+function mergeGeos(geos) {
+  const out = new THREE.BufferGeometry();
+  for (const a of ['position', 'normal', 'uv', 'color']) {
+    if (!geos.every(g => g.attributes[a])) continue;
+    const arr = new Float32Array(geos.reduce((n, g) => n + g.attributes[a].array.length, 0));
+    let o = 0;
+    for (const g of geos) { arr.set(g.attributes[a].array, o); o += g.attributes[a].array.length; }
+    out.setAttribute(a, new THREE.BufferAttribute(arr, geos[0].attributes[a].itemSize));
+  }
+  out.computeBoundingSphere();
+  return out;
+}
+// Teile werden je Material und 1600er-Kachel zusammengefasst, damit Frustum-Culling weiter greift
+const batches = new Map();
+function batchAdd(geo, material, x, y, z, rotY = 0, cast = true) {
+  const g = geo.index ? geo.toNonIndexed() : geo.clone();
+  if (rotY) g.rotateY(rotY);
+  g.translate(x, y, z);
+  const key = material.uuid + '|' + Math.floor(x / 1600) + '|' + Math.floor(z / 1600) + '|' + cast;
+  if (!batches.has(key)) batches.set(key, { material, cast, list: [] });
+  batches.get(key).list.push(g);
+}
+function flushBatches() {
+  for (const { material, cast, list } of batches.values()) {
+    const m = new THREE.Mesh(mergeGeos(list), material);
+    m.castShadow = cast && !LOW_GFX; m.receiveShadow = !LOW_GFX;
+    scene.add(m);
+  }
+  batches.clear();
+}
+
 // ---------- Boden (aus der 2D-Kachelgrafik gerendert) ----------
 (function buildGround() {
   const S = LOW_GFX ? 2048 : 4096;
@@ -1987,7 +2614,7 @@ function canvasTex(w, h, draw) {
   scene.add(ground);
   // Erhöhte Gehwege/Parks: eine 3er-Platte pro Block mit Bordsteinkante
   const curb = mat(0xa7a69f);
-  const SS = LOW_GFX ? 256 : 512;
+  const SS = BIG ? (LOW_GFX ? 128 : 256) : (LOW_GFX ? 256 : 512);
   for (let by = 0; by < BLOCKS; by++) for (let bx = 0; bx < BLOCKS; bx++) {
     const x0 = (bx * 10 + 2) * TILE, y0 = (by * 10 + 2) * TILE, sz = 8 * TILE;
     const top = canvasTex(SS, SS, g => {
@@ -2093,7 +2720,10 @@ function roofTexture(kind) {
 function signTexture(text, bg, fg) {
   return canvasTex(512, 96, (g) => {
     g.fillStyle = bg; g.fillRect(0, 0, 512, 96);
-    g.fillStyle = fg; g.font = 'bold 64px Impact, Arial Black, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    let fs = 64;
+    g.font = `bold ${fs}px Impact, Arial Black, sans-serif`;
+    while (g.measureText(text).width > 480 && fs > 20) { fs -= 4; g.font = `bold ${fs}px Impact, Arial Black, sans-serif`; }
+    g.fillStyle = fg; g.textAlign = 'center'; g.textBaseline = 'middle';
     g.fillText(text, 256, 52);
   });
 }
@@ -2120,55 +2750,49 @@ function makeBuildingBox(x, z, w, d, h, color, roofMat, style = 'plaster') {
   const m = new THREE.Mesh(geo, [side, side, roof, roof, side, side]);
   m.position.set(x, h / 2, z);
   m.castShadow = m.receiveShadow = !LOW_GFX;
+  m.userData.r = Math.hypot(w, d) / 2;
   scene.add(m);
   buildingMeshes.push(m);
   return m;
 }
+const SIGNS = {
+  police: ['POLIZEI', '#1f5fc8', '#fff'], hospital: ['KRANKENHAUS', '#fff', '#d7263d'], autohaus: ['AUTOHAUS', '#0f2740', '#6fc3ff'],
+  scootershop: ['SCOOTER-LADEN', '#0d2a1b', '#3dd68c'], tuneshop: ['TUNE SHOP', '#1a0f2a', '#ff4fd8'], home: ['ZUHAUSE', '#2b1d14', '#ffd166'],
+  prison: ['JUSTIZVOLLZUGSANSTALT', '#333842', '#e6e9ee'],
+};
+const KIND_H = { police: 70, autohaus: 95, hospital: 110, scootershop: 80, tuneshop: 75, home: 430, prison: 85 };
 (function buildCity() {
   const rng = mulberry32(777);
+  const rim = mat(0x6f6c66), acMat = mat(0xb8bcc2), antMat = mat(0x555555), tankMat = mat(0x8d7b64);
+  const acGeo = new THREE.BoxGeometry(24, 12, 20), antGeo = new THREE.BoxGeometry(2, 40, 2), tankGeo = new THREE.CylinderGeometry(12, 12, 22, 12);
   for (const b of buildings) {
     if (b.kind === 'garage') continue; // eigene Werkstatt-Gebäude, siehe buildGarages()
-    let h;
-    if (b.kind === 'police') h = 70;
-    else if (b.kind === 'autohaus') h = 95;
-    else if (b.kind === 'hospital') h = 110;
-    else h = 70 + Math.pow(rng(), 1.6) * 330;
+    let h = KIND_H[b.kind];
+    if (!h) h = b.downtown ? 320 + Math.pow(rng(), 1.3) * 460 : 70 + Math.pow(rng(), 1.6) * (BIG ? 280 : 330);
     const roofMat = (b.kind === 'police' || b.kind === 'hospital') ? new THREE.MeshLambertMaterial({ map: roofTexture(b.kind) }) : null;
-    const style = b.kind === 'autohaus' ? 'glass' : b.kind !== 'build' ? 'plaster' : h > 250 && rng() < 0.75 ? 'glass' : rng() < 0.45 ? 'brick' : 'plaster';
-    const m = makeBuildingBox(b.x + b.w / 2, b.y + b.h / 2, b.w - 2, b.h - 2, h, b.color, roofMat, style);
+    const style = (b.kind === 'autohaus' || b.kind === 'scootershop') ? 'glass' : b.kind === 'tuneshop' ? 'brick'
+      : b.kind !== 'build' ? 'plaster' : h > 250 && rng() < (b.downtown ? 0.85 : 0.75) ? 'glass' : rng() < 0.45 ? 'brick' : 'plaster';
+    makeBuildingBox(b.x + b.w / 2, b.y + b.h / 2, b.w - 2, b.h - 2, h, b.color, roofMat, style);
+    const cx = b.x + b.w / 2, cz = b.y + b.h / 2;
     if (b.kind === 'build') {
-      // Erdgeschoss mit Läden und Markisen
-      const shop = new THREE.Mesh(scaledBox(b.w + 1, 30, b.h + 1, 128, 32), [shopMat, shopMat, mat(0x3a3530), mat(0x3a3530), shopMat, shopMat]);
-      shop.position.set(b.x + b.w / 2, 15, b.y + b.h / 2);
-      shop.receiveShadow = !LOW_GFX;
-      scene.add(shop);
-      m.userData.extras = [shop];
-      // Dachkante
-      const rim = mat(0x6f6c66);
-      for (const [rx, rz, rw, rd] of [[0, -(b.h - 2) / 2, b.w - 2, 3], [0, (b.h - 2) / 2, b.w - 2, 3], [-(b.w - 2) / 2, 0, 3, b.h - 2], [(b.w - 2) / 2, 0, 3, b.h - 2]]) {
-        const r = box(rw, 5, rd, rim, b.x + b.w / 2 + rx, h + 2.5, b.y + b.h / 2 + rz);
-        scene.add(r);
-      }
+      // Erdgeschoss mit Läden und Markisen, Dachkante, Antennen und Tanks – alles gebündelt
+      batchAdd(scaledBox(b.w + 1, 30, b.h + 1, 128, 32), shopMat, cx, 15, cz, 0, false);
+      for (const [rx, rz, rw, rd] of [[0, -(b.h - 2) / 2, b.w - 2, 3], [0, (b.h - 2) / 2, b.w - 2, 3], [-(b.w - 2) / 2, 0, 3, b.h - 2], [(b.w - 2) / 2, 0, 3, b.h - 2]])
+        batchAdd(new THREE.BoxGeometry(rw, 5, rd), rim, cx + rx, h + 2.5, cz + rz);
       if (h > 240 && rng() < 0.6) {
-        const ant = box(2, 40, 2, mat(0x555555), b.x + b.w / 2 + 20, h + 20, b.y + b.h / 2 - 15); scene.add(ant);
-        const tank = new THREE.Mesh(new THREE.CylinderGeometry(12, 12, 22, 14), mat(0x8d7b64));
-        tank.position.set(b.x + b.w / 2 - 30, h + 11, b.y + b.h / 2 + 25); tank.castShadow = !LOW_GFX; scene.add(tank);
+        batchAdd(antGeo, antMat, cx + 20, h + 20, cz - 15);
+        batchAdd(tankGeo, tankMat, cx - 30, h + 11, cz + 25);
       }
     }
-    if (b.kind === 'police' || b.kind === 'hospital' || b.kind === 'autohaus') {
+    if (SIGNS[b.kind]) {
       // Schild über dem Eingang (Südseite)
-      const sign = new THREE.Mesh(new THREE.PlaneGeometry(220, 40),
-        new THREE.MeshBasicMaterial({ map: b.kind === 'police' ? signTexture('POLIZEI', '#1f5fc8', '#fff') : b.kind === 'autohaus' ? signTexture('AUTOHAUS', '#0f2740', '#6fc3ff') : signTexture('KRANKENHAUS', '#fff', '#d7263d') }));
-      sign.position.set(b.x + b.w / 2, h - 28, b.y + b.h + 0.5);
+      const [text, bg, fg] = SIGNS[b.kind];
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(220, 40), new THREE.MeshBasicMaterial({ map: signTexture(text, bg, fg) }));
+      sign.position.set(cx, Math.min(h - 28, 62), b.y + b.h + 0.5);
       scene.add(sign);
     } else {
-      // Dachaufbauten
       const n = 1 + Math.floor(b.seed * 3);
-      for (let i = 0; i < n; i++) {
-        const ac = box(24, 12, 20, mat(0xb8bcc2), b.x + 30 + hash(i, b.x) * (b.w - 60), h + 6, b.y + 30 + hash(b.y, i) * (b.h - 60));
-        m.userData.extras = (m.userData.extras || []).concat(ac);
-        scene.add(ac);
-      }
+      for (let i = 0; i < n; i++) batchAdd(acGeo, acMat, b.x + 30 + hash(i, b.x) * (b.w - 60), h + 6, b.y + 30 + hash(b.y, i) * (b.h - 60));
     }
   }
   // Stadtgrenze: hohe Gebäuderiegel rundherum
@@ -2178,6 +2802,7 @@ function makeBuildingBox(x, z, w, d, h, color, roofMat, style = 'plaster') {
     [-edge / 2, WORLD / 2, edge, WORLD], [WORLD + edge / 2, WORLD / 2, edge, WORLD],
   ];
   for (const [x, z, w, d] of ring) makeBuildingBox(x, z, w, d, 260, 0x8a8f99, null, 'glass');
+  flushBatches();
 })();
 
 // Bäume (instanziert) und Brunnen
@@ -2246,7 +2871,9 @@ function makePerson(shirt = ORANGE, pants = PANTS, hairMat = HAIR) {
 function makeScooter() {
   const g = new THREE.Group();
   g.add(box(30, 3, 9, mat(0x1d2228), 0, 5, 0));
-  g.add(box(24, 0.8, 3, new THREE.MeshBasicMaterial({ color: 0x3dd68c }), -1, 6.8, 0));
+  const accent = new THREE.MeshBasicMaterial({ color: 0x3dd68c });
+  g.add(box(24, 0.8, 3, accent, -1, 6.8, 0));
+  g.userData.accent = accent;
   const wheelGeo = new THREE.CylinderGeometry(4, 4, 3, 14);
   const rear = new THREE.Mesh(wheelGeo, mat(0x111111)); rear.rotation.x = Math.PI / 2; rear.position.set(-15, 4, 0); g.add(rear);
   g.add(box(9, 1.2, 4, mat(0x1d2228), -15, 8.6, 0));
@@ -2321,6 +2948,186 @@ function makeHeli() {
   g.traverse(o => { if (o.isMesh) o.castShadow = !LOW_GFX; });
   scene.add(g);
   return g;
+}
+
+// ---------- Autos: aus Quadern mit Vertex-Farben zu einer Mesh zusammengesetzt ----------
+function carGeometry(color, opt = {}) {
+  const parts = [], glass = 0x2b3a4c, dark = 0x16181b;
+  const P = (w, h, d, x, y, z, c) => parts.push([w, h, d, x, y, z, c]);
+  if (opt.van) {
+    P(62, 24, 28, 0, 16, 0, color);
+    P(48, 8, 28.6, -4, 22, 0, glass);            // Fensterband
+    P(2, 10, 24, 31.2, 20, 0, glass);            // Frontscheibe
+  } else if (opt.sport) {
+    P(60, 9, 28, 0, 8.5, 0, color);
+    P(26, 8, 24, -6, 16.5, 0, glass);
+    P(20, 1.5, 23, -6, 21, 0, color);
+    P(12, 1, 22, 20, 13.2, 0, color);            // Motorhaube
+  } else {
+    P(58, 11, 28, 0, 9.5, 0, color);
+    P(30, 10, 25, -4, 19.5, 0, glass);
+    P(24, 2, 24, -5, 25.5, 0, color);
+  }
+  P(3, 5, 29, 30, 7, 0, dark); P(3, 5, 29, -30, 7, 0, dark);           // Stoßstangen
+  P(1, 3, 6, 31.8, 11, -9, 0xfff3c0); P(1, 3, 6, 31.8, 11, 9, 0xfff3c0); // Scheinwerfer
+  P(1, 3, 6, -31.8, 11, -9, 0xcc1111); P(1, 3, 6, -31.8, 11, 9, 0xcc1111);
+  for (const [x, z] of [[-18, -13.5], [18, -13.5], [-18, 13.5], [18, 13.5]]) {
+    P(11, 11, 4.5, x, 5.5, z, dark);
+    if (opt.rims) P(6, 6, 1, x, 5.5, z + Math.sign(z) * 2.6, 0xd4af37);
+  }
+  if (opt.spoiler) { P(2, 5, 2, -26, 16, -9, dark); P(2, 5, 2, -26, 16, 9, dark); P(7, 1.5, 28, -27, 19, 0, color); }
+  return mergeGeos(parts.map(([w, h, d, x, y, z, c]) => {
+    const g = new THREE.BoxGeometry(w, h, d).toNonIndexed();
+    g.translate(x, y, z);
+    const col = new THREE.Color(c), n = g.attributes.position.count, arr = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) arr.set([col.r, col.g, col.b], i * 3);
+    g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+    g.deleteAttribute('uv');
+    return g;
+  }));
+}
+const carMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+const civGeos = CIV_COLORS.map(c => [carGeometry(c), carGeometry(c, { van: true })]);
+let carMesh = null;
+function rebuildPlayerCar() {
+  if (carMesh) { scene.remove(carMesh); carMesh.geometry.dispose(); }
+  carMesh = new THREE.Mesh(carGeometry(carTune.color, { sport: true, spoiler: carTune.spoiler, rims: carTune.rims }), carMat);
+  carMesh.castShadow = !LOW_GFX; carMesh.rotation.order = 'YXZ'; carMesh.visible = false;
+  scene.add(carMesh);
+}
+rebuildPlayerCar();
+const civMeshes = new Map();
+function syncTraffic() {
+  const alive = new Set(traffic);
+  for (const c of traffic) {
+    let m = civMeshes.get(c);
+    if (!m) { m = new THREE.Mesh(civGeos[c.color][c.van ? 1 : 0], carMat); m.castShadow = !LOW_GFX; scene.add(m); civMeshes.set(c, m); }
+    m.visible = Math.hypot(c.x - cam.x, c.y - cam.y) < 2300;
+    m.position.set(c.x, 0, c.y);
+    m.rotation.y = -c.angle;
+  }
+  for (const [c, m] of civMeshes) if (!alive.has(c)) { scene.remove(m); civMeshes.delete(c); }
+}
+
+// ---------- Läden der Großstadt: Verkäufer, Podest mit Ausstellungsstück, Preisschild ----------
+const showItems = [];
+function priceTagTex(title, price, col) {
+  return canvasTex(256, 96, (g) => {
+    g.fillStyle = '#10151d'; g.fillRect(0, 0, 256, 96); g.strokeStyle = col; g.lineWidth = 6; g.strokeRect(3, 3, 250, 90);
+    g.fillStyle = '#fff'; g.font = 'bold 30px Impact, Arial Black, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(title, 128, 32); g.fillStyle = '#7ee08a'; g.fillText(price, 128, 68);
+  });
+}
+function makeShopfront(spot, shirt, item, lift, title, price, col) {
+  const seller = makePerson(mat(shirt), mat(0x1b1d22), mat(0x5b3a1e));
+  seller.position.set(spot.x, CURB, spot.y); seller.rotation.y = -spot.angle;
+  seller.userData.gun.visible = false; seller.userData.armR.rotation.z = seller.userData.armL.rotation.z = -1.2;
+  const podium = new THREE.Mesh(new THREE.CylinderGeometry(34, 36, 8, 28), mat(0x2b3440)); podium.position.set(spot.x + 70, CURB + 4, spot.y - 20);
+  item.position.set(spot.x + 70, CURB + lift, spot.y - 20);
+  const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: priceTagTex(title, price, col) }));
+  tag.scale.set(54, 20, 1); tag.position.set(spot.x + 70, 46 + lift, spot.y - 20);
+  scene.add(seller, podium, item, tag);
+  showItems.push(item);
+}
+const signSprite = (text, bg, fg, size = 34) => {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTex(128, 128, (g) => {
+    g.fillStyle = bg; g.beginPath(); g.arc(64, 64, 58, 0, TAU); g.fill();
+    g.fillStyle = fg; g.font = 'bold 72px Impact, Arial Black, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 64, 68);
+  }), depthTest: false }));
+  sp.scale.set(size, size, 1);
+  return sp;
+};
+const cityMarkers = [];
+if (BIG) {
+  const blitz = makeScooter(); blitz.userData.accent.color.setHex(VEH.s3.color);
+  makeShopfront(scooterShop, 0x2e7d4f, blitz, 8, 'BLITZ X', '$1.500', '#3dd68c');
+  makeShopfront(tuneShop, 0x5e2a7e, new THREE.Mesh(carGeometry(0xff4fd8, { sport: true, spoiler: true, rims: true }), carMat), 8, 'TUNE SHOP', 'Lack & Motor', '#ff4fd8');
+  // Haustür der Wohnung mit Leuchtring und Haus-Symbol
+  const hb = SPECIAL.home, doorZ = (hb.by * 10 + 9) * TILE;
+  scene.add(box(44, 56, 4, mat(0x5d3a1f), homeDoor.x, CURB + 28, doorZ + 1));
+  scene.add(box(6, 6, 2, mat(0xffd166), homeDoor.x + 14, CURB + 28, doorZ + 3.5));
+  const ring = new THREE.Mesh(new THREE.RingGeometry(26, 32, 36), new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.6, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2; ring.position.set(homeDoor.x, CURB + 0.6, homeDoor.y); scene.add(ring);
+  const houseIcon = signSprite('⌂', '#2b1d14', '#ffd166'); houseIcon.position.set(homeDoor.x, 90, homeDoor.y); scene.add(houseIcon);
+  cityMarkers.push(houseIcon);
+}
+// Kleinstadt: Autobahnschild und Leuchtring an der Auffahrt zur Großstadt
+if (!BIG) {
+  const x = townExit.x - 40, y0 = 30 * TILE - 12, y1 = 32 * TILE + 12, grey = mat(0x8d9096);
+  scene.add(box(4, 90, 4, grey, x, 45, y0), box(4, 90, 4, grey, x, 45, y1), box(4, 4, y1 - y0, grey, x, 88, (y0 + y1) / 2));
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(130, 46), new THREE.MeshBasicMaterial({ map: signTexture('A7 → GROSSSTADT', '#1f4fa8', '#fff'), side: THREE.DoubleSide }));
+  sign.rotation.y = -Math.PI / 2; sign.position.set(x - 3, 66, (y0 + y1) / 2); scene.add(sign);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(40, 48, 40), new THREE.MeshBasicMaterial({ color: 0x8ab4ff, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2; ring.position.set(townExit.x, 0.6, townExit.y); scene.add(ring);
+}
+
+// ---------- Automaten ----------
+const atmMeshes = atms.map(m => {
+  const g = new THREE.Group();
+  const bodyCol = m.type === 'atm' ? 0x2e5aa8 : 0xc0392b;
+  g.add(box(14, 46, 24, mat(bodyCol), 0, CURB + 23, 0));
+  const screen = new THREE.MeshBasicMaterial({ color: 0x7ee08a });
+  g.add(box(1, 11, 14, screen, 7.2, CURB + 33, 0));
+  g.add(box(1, 5, 20, mat(m.type === 'atm' ? 0xdfe9f2 : 0xffd166), 7.2, CURB + 44, 0));
+  if (m.type === 'snack') g.add(box(1, 16, 16, mat(0x1b2530), 7.2, CURB + 17, 0));
+  g.position.set(m.x, 0, m.y); g.rotation.y = -m.angle;
+  g.traverse(o => { if (o.isMesh) o.castShadow = !LOW_GFX; });
+  g.userData.screen = screen;
+  scene.add(g);
+  return g;
+});
+
+// ---------- Wohnung ----------
+if (BIG) (function buildInterior() {
+  const g = new THREE.Group(), F = CURB;
+  const floorTex = canvasTex(256, 256, (c) => {
+    c.fillStyle = '#9b6b43'; c.fillRect(0, 0, 256, 256);
+    for (let y = 0; y < 256; y += 32) for (let x = (y / 32 % 2) * 64; x < 256 + 128; x += 128) {
+      c.fillStyle = `hsl(28, 40%, ${36 + Math.random() * 10}%)`; c.fillRect(x, y + 1, 126, 30);
+    }
+  });
+  floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping; floorTex.repeat.set(ROOM_W / 128, ROOM_H / 128);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ROOM_W, ROOM_H), new THREE.MeshLambertMaterial({ map: floorTex }));
+  floor.rotation.x = -Math.PI / 2; floor.position.set(IX + ROOM_W / 2, F + 0.3, IY + ROOM_H / 2); floor.receiveShadow = true; g.add(floor);
+  const wall = mat(0xe9dcc6), trim = mat(0xbfae94);
+  g.add(box(ROOM_W + 20, 90, 10, wall, IX + ROOM_W / 2, F + 45, IY - 5));
+  g.add(box(10, 90, ROOM_H + 20, wall, IX - 5, F + 45, IY + ROOM_H / 2));
+  g.add(box(10, 90, ROOM_H + 20, wall, IX + ROOM_W + 5, F + 45, IY + ROOM_H / 2));
+  // Vorderwand nur halbhoch, damit die Kamera hineinsieht; in der Mitte die Tür
+  g.add(box(280, 18, 10, trim, IX + 140, F + 9, IY + ROOM_H + 5), box(280, 18, 10, trim, IX + ROOM_W - 140, F + 9, IY + ROOM_H + 5));
+  const rug = new THREE.Mesh(new THREE.PlaneGeometry(200, 130), mat(0x8e3b46)); rug.rotation.x = -Math.PI / 2; rug.position.set(IX + 150, F + 0.6, IY + 180); g.add(rug);
+  // Möbel entsprechend ROOM_SOLIDS
+  g.add(box(154, 18, 96, mat(0x6d4c41), IX + 547, F + 9, IY + 64), box(146, 8, 88, mat(0xf4f1ea), IX + 547, F + 22, IY + 64), box(40, 8, 70, mat(0xffffff), IX + 600, F + 28, IY + 64), box(90, 4, 90, mat(0x3f7fcf), IX + 520, F + 27, IY + 64));
+  g.add(box(160, 20, 48, mat(0x5b6f8a), IX + 140, F + 10, IY + 274), box(160, 24, 12, mat(0x4f6179), IX + 140, F + 22, IY + 292));
+  g.add(box(120, 16, 22, mat(0x3a2a20), IX + 150, F + 8, IY + 25), box(110, 50, 4, mat(0x111111), IX + 150, F + 44, IY + 22));
+  g.add(box(80, 14, 40, mat(0x8d6e63), IX + 150, F + 7, IY + 180));
+  g.add(box(190, 36, 38, mat(0xf4f4f0), IX + 345, F + 18, IY + 33), box(190, 3, 40, mat(0x2b2b2b), IX + 345, F + 37, IY + 33));
+  g.add(box(96, 26, 64, mat(0x795548), IX + 348, F + 13, IY + 212));
+  // Waffentresor mit leuchtendem Zahlenschloss
+  g.add(box(40, 50, 44, mat(0x3a3f47), IX + 606, F + 25, IY + 312), box(1, 8, 8, new THREE.MeshBasicMaterial({ color: 0x7ee08a }), IX + 585.5, F + 34, IY + 312));
+  // Schlüsselbrett an der linken Wand
+  g.add(box(3, 22, 40, mat(0x6d4c41), IX + 2, F + 50, IY + 140));
+  for (let i = 0; i < 3; i++) g.add(box(2, 6, 2, mat(0xffd166), IX + 5, F + 45, IY + 128 + i * 12));
+  // Pflanze
+  const pot = new THREE.Mesh(new THREE.CylinderGeometry(10, 8, 18, 12), mat(0xb5651d)); pot.position.set(IX + 30, F + 9, IY + 380); g.add(pot);
+  const leaves = new THREE.Mesh(new THREE.IcosahedronGeometry(18, 1), mat(0x2f7a2a)); leaves.position.set(IX + 30, F + 34, IY + 380); g.add(leaves);
+  // Leuchtringe an den Interaktionspunkten
+  for (const [p, c] of [[ROOM_POINTS.safe, 0x7ee08a], [ROOM_POINTS.keys, 0x8ab4ff], [ROOM_POINTS.leave, 0xffd166]]) {
+    const r = new THREE.Mesh(new THREE.RingGeometry(18, 23, 32), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
+    r.rotation.x = -Math.PI / 2; r.position.set(p.x, F + 0.8, p.y); g.add(r);
+  }
+  g.traverse(o => { if (o.isMesh && o !== floor && o !== rug) { o.castShadow = !LOW_GFX; o.receiveShadow = !LOW_GFX; } });
+  scene.add(g);
+})();
+
+// Automaten-Bildschirme, Markierungen
+function syncCity() {
+  atms.forEach((m, i) => {
+    const g = atmMeshes[i];
+    g.visible = Math.hypot(m.x - cam.x, m.y - cam.y) < 1800;
+    g.userData.screen.color.setHex(m.cool > 0 ? 0x301010 : (robbing && robbing.m === m ? ((time * 8 % 1) < 0.5 ? 0xff3344 : 0xffd166) : 0x7ee08a));
+  });
+  for (const s of cityMarkers) s.position.y = 90 + Math.sin(time * 2) * 4;
 }
 
 const playerMesh = makePerson();
@@ -2399,12 +3206,14 @@ function syncGarages() {
 const autoSeller = makePerson(mat(0x1e3a5f), mat(0x1b1d22), mat(0x5b3a1e));
 autoSeller.position.set(autohaus.x, CURB, autohaus.y); autoSeller.rotation.y = -autohaus.angle;
 autoSeller.userData.gun.visible = false; autoSeller.userData.armR.rotation.z = autoSeller.userData.armL.rotation.z = -1.2;
-const showMoped = makeMoped(); showMoped.position.set(autohaus.x + 70, CURB + 8, autohaus.y - 20);
+const showMoped = BIG ? new THREE.Mesh(carGeometry(0x2e86de, { sport: true, spoiler: true }), carMat) : makeMoped();
+showMoped.position.set(autohaus.x + 70, CURB + 8, autohaus.y - 20);
+showItems.push(showMoped);
 const podium = new THREE.Mesh(new THREE.CylinderGeometry(34, 36, 8, 28), mat(0x2b3440)); podium.position.set(autohaus.x + 70, CURB + 4, autohaus.y - 20);
 const priceTag = new THREE.Sprite(new THREE.SpriteMaterial({ map: canvasTex(256, 96, (g) => {
   g.fillStyle = '#0f2740'; g.fillRect(0, 0, 256, 96); g.strokeStyle = '#6fc3ff'; g.lineWidth = 6; g.strokeRect(3, 3, 250, 90);
   g.fillStyle = '#fff'; g.font = 'bold 30px Impact, Arial Black, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText('E-MOPED', 128, 32); g.fillStyle = '#7ee08a'; g.fillText('$5.000', 128, 68);
+  g.fillText(BIG ? 'SPORTWAGEN' : 'E-MOPED', 128, 32); g.fillStyle = '#7ee08a'; g.fillText(BIG ? '$15.000' : '$5.000', 128, 68);
 }) }));
 priceTag.scale.set(54, 20, 1); priceTag.position.set(autohaus.x + 70, 46, autohaus.y - 20);
 scene.add(autoSeller, showMoped, podium, priceTag);
@@ -2521,41 +3330,47 @@ function screenToWorldAngle(a) { return a + Math.PI / 2 + camYaw + lookYaw; }
 
 
 // ---------- Ampeln ----------
-const lightSets = [];
+const lightLamps = [];
+let lampMesh = null;
 (function buildTrafficLights() {
   const poleGeo = new THREE.CylinderGeometry(1.3, 1.6, 50, 6), headGeo = new THREE.BoxGeometry(5, 16, 7), lampGeo = new THREE.BoxGeometry(1.2, 3.8, 3.8);
-  const dark = mat(0x23262b);
+  const dark = mat(0x23262b), mats = [];
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
   for (let iy = 0; iy <= BLOCKS; iy++) for (let ix = 0; ix <= BLOCKS; ix++) {
-    const set = { ix, iy, x: (ix * 10 + 1) * TILE, y: (iy * 10 + 1) * TILE, group: new THREE.Group(), ew: {}, ns: {} };
-    for (const k of ['ew', 'ns']) for (const c of ['r', 'y', 'g']) set[k][c] = new THREE.MeshBasicMaterial({ color: 0x222222 });
     // zwei Masten an diagonalen Ecken der Kreuzung
     const corners = [[(ix * 10 + 2) * TILE + 10, (iy * 10 + 2) * TILE + 10, 1], [(ix * 10) * TILE - 10, (iy * 10) * TILE - 10, -1]];
     for (const [px, pz, sgn] of corners) {
       if (tileAtPx(px, pz) !== WALK) continue;
-      const pole = new THREE.Mesh(poleGeo, dark); pole.position.set(px, 25 + CURB, pz); pole.castShadow = !LOW_GFX; set.group.add(pole);
+      batchAdd(poleGeo, dark, px, 25 + CURB, pz);
       // Kopf für die waagrechte Straße (zeigt in x-Richtung) und für die senkrechte (z-Richtung)
       for (const k of ['ew', 'ns']) {
-        const head = new THREE.Group();
-        head.position.set(px, 50 + CURB, pz);
-        head.rotation.y = k === 'ew' ? (sgn > 0 ? 0 : Math.PI) : (sgn > 0 ? -Math.PI / 2 : Math.PI / 2);
-        head.add(new THREE.Mesh(headGeo, dark));
-        ['r', 'y', 'g'].forEach((c, i) => { const l = new THREE.Mesh(lampGeo, set[k][c]); l.position.set(2.8, 5 - i * 5, 0); head.add(l); });
-        set.group.add(head);
+        const rot = k === 'ew' ? (sgn > 0 ? 0 : Math.PI) : (sgn > 0 ? -Math.PI / 2 : Math.PI / 2);
+        batchAdd(headGeo, dark, px, 50 + CURB, pz, rot);
+        q.setFromEuler(e.set(0, rot, 0));
+        ['r', 'y', 'g'].forEach((c, i) => {
+          m4.compose(v.set(px + Math.cos(rot) * 2.8, 55 + CURB - i * 5, pz - Math.sin(rot) * 2.8), q, one);
+          mats.push(m4.clone());
+          lightLamps.push({ ix, iy, k, c });
+        });
       }
     }
-    scene.add(set.group);
-    lightSets.push(set);
   }
+  flushBatches();
+  lampMesh = new THREE.InstancedMesh(lampGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }), mats.length);
+  mats.forEach((m, i) => { lampMesh.setMatrixAt(i, m); lampMesh.setColorAt(i, new THREE.Color(0x222222)); });
+  scene.add(lampMesh);
 })();
 const LAMP_ON = { r: 0xff2d2d, y: 0xffc21f, g: 0x2dff74 }, LAMP_OFF = { r: 0x3a0d0d, y: 0x3a300c, g: 0x0c3a1a };
+const lampCol = new THREE.Color();
 function syncLights() {
-  for (const s of lightSets) {
-    const vis = Math.hypot(s.x - cam.x, s.y - cam.y) < (LOW_GFX ? 950 : 1500);
-    s.group.visible = vis;
-    if (!vis) continue;
-    const L = lightPhase(s.ix, s.iy);
-    for (const k of ['ew', 'ns']) for (const c of ['r', 'y', 'g']) s[k][c].color.setHex(L[k] === c ? LAMP_ON[c] : LAMP_OFF[c]);
-  }
+  const cache = new Map();
+  lightLamps.forEach((l, i) => {
+    const key = l.ix * 100 + l.iy;
+    let L = cache.get(key);
+    if (!L) { L = lightPhase(l.ix, l.iy); cache.set(key, L); }
+    lampMesh.setColorAt(i, lampCol.setHex(L[l.k] === l.c ? LAMP_ON[l.c] : LAMP_OFF[l.c]));
+  });
+  lampMesh.instanceColor.needsUpdate = true;
 }
 
 // ---------- Passanten ----------
@@ -2613,6 +3428,12 @@ function syncPeds() {
 // ---------- Kamera ----------
 let camDist = 170, camHeight = 105;
 function updateCamera(dt) {
+  if (indoors) {
+    cam.x += (player.x - cam.x) * Math.min(1, dt * 7); cam.y += (player.y - cam.y) * Math.min(1, dt * 7);
+    camYaw = -Math.PI / 2; lookYaw = 0; lookPitch = 0;
+    camDist += (190 - camDist) * Math.min(1, dt * 4); camHeight += (330 - camHeight) * Math.min(1, dt * 4);
+    return;
+  }
   if (player.onScooter && Math.abs(scooter.speed) > 25) {
     camYaw += angDiff(camYaw, scooter.angle) * Math.min(1, dt * 2.4);
   }
@@ -2629,7 +3450,7 @@ function updateCamera(dt) {
   cam.x += (tx - cam.x) * Math.min(1, dt * 7);
   cam.y += (ty - cam.y) * Math.min(1, dt * 7);
   const sp = player.onScooter ? Math.abs(scooter.speed) : 0;
-  camDist += (165 + Math.min(sp, 900) * 0.14 + wanted * 8 - camDist) * Math.min(1, dt * 2);
+  camDist += ((player.onScooter && vKind() === 'car' ? 200 : 165) + Math.min(sp, 900) * 0.14 + wanted * 8 - camDist) * Math.min(1, dt * 2);
   camHeight += (100 + Math.min(sp, 900) * 0.05 + wanted * 8 - camHeight) * Math.min(1, dt * 2);
 }
 
@@ -2661,7 +3482,7 @@ function render3D(dt) {
     const t = performance.now() / 1000 * 0.05;
     camera3.position.set(WORLD / 2 + Math.cos(t) * 1300, 650, WORLD / 2 + Math.sin(t) * 1300);
     camera3.lookAt(WORLD / 2, 0, WORLD / 2);
-    playerMesh.visible = scooterMesh.visible = mopedMesh.visible = false;
+    playerMesh.visible = scooterMesh.visible = mopedMesh.visible = carMesh.visible = false;
     renderer.render(scene, camera3);
     return;
   }
@@ -2691,15 +3512,18 @@ function render3D(dt) {
   steerVis += ((scooter.steer || 0) - steerVis) * k;
   const leanT = player.onScooter ? steerVis * clamp(Math.abs(scooter.speed) / 390, 0, 1) * 0.28 * Math.sign(scooter.speed || 1) : 0;
   leanVis += (leanT - leanVis) * k;
-  const gS = groundH(scooter.x, scooter.y), isMoped = vehicle === 'moped';
-  const veh = isMoped ? mopedMesh : scooterMesh;
-  scooterMesh.visible = !isMoped; mopedMesh.visible = isMoped;
+  const kind = vKind(), gS = groundH(scooter.x, scooter.y), isMoped = kind === 'moped', isCar = kind === 'car';
+  const veh = isMoped ? mopedMesh : isCar ? carMesh : scooterMesh;
+  scooterMesh.visible = kind === 'scooter'; mopedMesh.visible = isMoped; carMesh.visible = isCar;
+  if (kind === 'scooter') scooterMesh.userData.accent.color.setHex(VEH[vehicle].color);
   veh.position.set(scooter.x, gS, scooter.y);
-  veh.rotation.set(leanVis, -scooter.angle, 0);
-  veh.userData.steer.rotation.y = -steerVis * 0.5;
-  showMoped.visible = !isMoped;
-  showMoped.rotation.y = time * 0.5;
+  veh.rotation.set(isCar ? 0 : leanVis, -scooter.angle, 0);
+  if (veh.userData.steer) veh.userData.steer.rotation.y = -steerVis * 0.5;
+  showMoped.visible = BIG || !isMoped;
+  for (const d of showItems) d.rotation.y = time * 0.5;
   syncGarages();
+  syncCity();
+  for (const m of buildingMeshes) m.visible = Math.hypot(m.position.x - cam.x, m.position.z - cam.y) < 3000 + m.userData.r;
   const moving = Math.hypot(player.vx, player.vy) > 10;
   if (player.onScooter) {
     // Fahrer neigt sich mit dem Roller in die Kurve
@@ -2707,6 +3531,7 @@ function render3D(dt) {
     playerMesh.position.set(scooter.x - Math.cos(scooter.angle) * back, gS + (isMoped ? 13 : 6.5), scooter.y - Math.sin(scooter.angle) * back);
     posePerson(playerMesh, scooter.angle, player.aim, true, 0, false);
     playerMesh.rotation.x = leanVis;
+    playerMesh.visible = !isCar; // im Auto sitzt man drin
     if (isMoped) { playerMesh.userData.legL.rotation.z = playerMesh.userData.legR.rotation.z = 1.25; }
     if (!WEAPONS[player.weapon].dmg) playerMesh.userData.armR.rotation.y = -0.25 - steerVis * 0.3;
     playerMesh.userData.armL.rotation.y = 0.25 - steerVis * 0.3;
@@ -2742,6 +3567,7 @@ function render3D(dt) {
 
   syncLights();
   syncPeds();
+  syncTraffic();
 
   // Wracks
   const seenW = new Set(wrecks);
