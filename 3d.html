@@ -88,7 +88,8 @@
     <div class="touch-guide">
       <b>So spielst du auf dem Handy</b> (am besten quer halten):<br>
       Linker Daumen: fahren / laufen · Rechter Daumen: zielen, weit ziehen = schießen ·
-      Oben wischen: umsehen · Runde Tasten: Aktion (Auf/Ab, Läden, Tür), Waffe, Gang, Bremse, Pause.
+      Oben wischen: umsehen · Runde Tasten: Aktion (Auf/Ab, Läden, Tür), Waffe, Gang, Bremse, Wheelie (↥ halten), Pause.
+      Bremse halten und dabei lenken = Driften.
     </div>
     <table class="desktop-only">
       <tr><td>W / ↑</td><td>Gas geben (Roller) / laufen</td></tr>
@@ -101,7 +102,8 @@
       <tr><td>Linke Maustaste</td><td>Schießen (zu Fuß <i>und</i> auf dem Roller)</td></tr>
       <tr><td>Q</td><td>Auf dem Roller: Gang wechseln · zu Fuß: Waffe wechseln</td></tr>
       <tr><td>1–6 / Mausrad</td><td>Waffe wechseln</td></tr>
-      <tr><td>Leertaste</td><td>Vollbremsung</td></tr>
+      <tr><td>Leertaste</td><td>Vollbremsung · beim Lenken mit Tempo: Driften</td></tr>
+      <tr><td>Umschalt (Shift) halten</td><td>Wheelie (Roller und Moped)</td></tr>
       <tr><td>P / Esc &nbsp; M</td><td>Pause &nbsp;·&nbsp; Ton an/aus</td></tr>
     </table>
     <details id="rules" open><summary>Spielregeln &amp; Tipps</summary>
@@ -378,6 +380,12 @@ const Snd = {
     this.siren = loop('sawtooth', 440, 1600);
     this.motor = loop('sawtooth', 100, 700);
     this.rotor = loop('square', 14, 180);
+    // Reifenquietschen beim Driften: gefiltertes Rauschen in Schleife
+    const src = c.createBufferSource(); src.buffer = this.noise; src.loop = true;
+    const bf = c.createBiquadFilter(); bf.type = 'bandpass'; bf.frequency.value = 1500; bf.Q.value = 5;
+    const sg = c.createGain(); sg.gain.value = 0;
+    src.connect(bf); bf.connect(sg); sg.connect(this.master); src.start();
+    this.screech = { g: sg, f: bf };
   },
   burst(freq, dur, vol, type = 'bandpass', q = 1) {
     if (!this.ctx) return;
@@ -458,7 +466,10 @@ const Snd = {
     this.siren.o.frequency.setTargetAtTime(Math.floor(time / 0.55) % 2 ? 585 : 440, t, 0.01);
     // Elektromotor
     const sp = player && player.onScooter ? Math.abs(scooter.speed) : 0;
-    this.motor.g.gain.setTargetAtTime(playing ? 0.012 + sp / 380 * 0.035 : 0, t, 0.05);
+    this.motor.g.gain.setTargetAtTime(playing ? 0.004 + sp / 380 * 0.011 : 0, t, 0.05);
+    const slip = playing && player && player.onScooter ? Math.abs(scooter.slip || 0) : 0;
+    this.screech.g.gain.setTargetAtTime(slip > 0.15 ? Math.min(0.06, slip * 0.1) : 0, t, 0.05);
+    this.screech.f.frequency.setTargetAtTime(1300 + slip * 600, t, 0.05);
     // Motordrehzahl: steigt im Gang an und fällt nach dem Hochschalten wieder ab
     const top = player && player.onScooter ? 390 * speedMult() * gearsOf()[curGear()][0] : 1;
     const rpm = clamp(sp / top, 0, 1.1);
@@ -600,7 +611,7 @@ cv.addEventListener('wheel', e => { wheel += Math.sign(e.deltaY); e.preventDefau
 
 // Touch-Steuerung: linker Stick fahren/laufen, rechter Stick zielen + schießen, Tasten rechts
 let touchMode = matchMedia('(pointer: coarse)').matches;
-const touch = { move: null, aim: null, look: null, brake: false, brakeId: null };
+const touch = { move: null, aim: null, look: null, brake: false, brakeId: null, wheelie: false, wheelieId: null };
 const STICK_R = 60;
 // Positionen der Sticks und Tasten; im Hochformat stehen die Tasten in Spalten über den Sticks
 function touchLayout() {
@@ -608,10 +619,10 @@ function touchLayout() {
   const r = Math.max(28, Math.min(36, Math.min(W, H) * 0.08));
   if (portrait) return {
     portrait, r, move: [90, H - 110], aim: [W - 90, H - 110],
-    E: [W - 48, H - 250], Wp: [W - 48, H - 332], brake: [48, H - 250], gear: [48, H - 332], pause: [W / 2, H - 36],
+    E: [W - 48, H - 250], Wp: [W - 48, H - 332], brake: [48, H - 250], gear: [48, H - 332], wheelie: [48, H - 414], pause: [W / 2, H - 36],
   };
   const bx = W - 110 - STICK_R - r - 20, lx = 100 + STICK_R + r + 20;
-  return { portrait, r, move: [100, H - 110], aim: [W - 110, H - 110], E: [bx, H - 150], Wp: [bx, H - 62], brake: [lx, H - 62], gear: [lx, H - 150], pause: [W / 2, 30] };
+  return { portrait, r, move: [100, H - 110], aim: [W - 110, H - 110], E: [bx, H - 150], Wp: [bx, H - 62], brake: [lx, H - 62], gear: [lx, H - 150], wheelie: [lx, H - 238], pause: [W / 2, 30] };
 }
 function touchButtons() {
   const L = touchLayout(), r = L.r;
@@ -625,6 +636,7 @@ function touchButtons() {
     ...(player && player.onScooter ? [
       { id: 'Brake', x: L.brake[0], y: L.brake[1], r: r * 0.85, label: '■', sub: 'Bremse' },
       { id: 'TouchG', x: L.gear[0], y: L.gear[1], r: r * 0.85, label: String(curGear() + 1), sub: 'Gang' }] : []),
+    ...(player && player.onScooter && vKind() !== 'car' ? [{ id: 'Wheelie', x: L.wheelie[0], y: L.wheelie[1], r: r * 0.85, label: '↥', sub: 'Wheelie' }] : []),
     { id: 'KeyP', x: L.pause[0], y: L.pause[1], r: 20, label: 'II', sub: '' },
   ];
 }
@@ -644,6 +656,7 @@ function onTouchStart(e) {
     const btn = touchButtons().find(b => Math.hypot(b.x - x, b.y - y) < b.r + 10);
     if (btn) {
       if (btn.id === 'Brake') { touch.brake = true; touch.brakeId = t.identifier; }
+      else if (btn.id === 'Wheelie') { touch.wheelie = true; touch.wheelieId = t.identifier; }
       else pressed[btn.id] = true;
       continue;
     }
@@ -673,6 +686,7 @@ function onTouchEnd(e) {
     if (touch.aim && touch.aim.id === t.identifier) touch.aim = null;
     if (touch.look && touch.look.id === t.identifier) touch.look = null;
     if (touch.brakeId === t.identifier) { touch.brake = false; touch.brakeId = null; }
+    if (touch.wheelieId === t.identifier) { touch.wheelie = false; touch.wheelieId = null; }
   }
 }
 cv.addEventListener('touchstart', onTouchStart, { passive: false });
@@ -700,7 +714,7 @@ function drawTouchControls() {
     if (!touch.aim) { ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.font = 'bold 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Zielen + Feuer', TL.aim[0], TL.aim[1] - STICK_R - 12); }
   }
   for (const b of touchButtons()) {
-    ctx.fillStyle = (b.id === 'Brake' && touch.brake) ? 'rgba(255,209,102,.6)' : 'rgba(0,0,0,.45)';
+    ctx.fillStyle = ((b.id === 'Brake' && touch.brake) || (b.id === 'Wheelie' && touch.wheelie)) ? 'rgba(255,209,102,.6)' : 'rgba(0,0,0,.45)';
     ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, TAU); ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 2; ctx.stroke();
     ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -917,7 +931,11 @@ function updatePlayer(dt) {
       steer = clamp(d * 2.2, -1, 1);
       thr = Math.abs(d) < 1.9 || s.speed < 60 ? mv.m : -1;
     }
-    if (keys.Space || touch.brake) s.speed = approach(s.speed, 0, 900 * sM * dt);
+    // Leertaste/Bremse + Lenken bei Tempo = Drift (Handbremse), sonst Vollbremsung
+    const braking = keys.Space || touch.brake;
+    const drifting = braking && Math.abs(steer) > 0.3 && s.speed > 150;
+    if (drifting) s.speed = approach(s.speed, 0, 110 * dt);
+    else if (braking) s.speed = approach(s.speed, 0, 900 * sM * dt);
     else if (thr > 0 && s.speed < maxF) s.speed = Math.min(maxF, s.speed + 330 * Math.pow(M, 0.85) * ACC * gAcc * thr * dt);
     else if (thr < 0) s.speed -= (s.speed > 0 ? 700 * sM : 240) * dt;
     else s.speed = approach(s.speed, 0, 150 * dt);
@@ -925,12 +943,30 @@ function updatePlayer(dt) {
     if (s.speed > maxF) s.speed = approach(s.speed, maxF, (grass && s.speed > vMax ? 600 : 260) * M * dt);
     s.speed = Math.max(s.speed, -90);
     const sf = clamp(s.speed / 140, -1, 1);
-    s.angle += steer * STEER * (1 + 0.12 * (M - 1)) * dt * sf * (1 - Math.min(Math.abs(s.speed) / (1000 * M), 0.3));
+    // Wheelie: Umschalt halten (Roller/Moped, ab etwas Tempo); auf dem Hinterrad lenkt es sich schwerer
+    const wantW = (keys.ShiftLeft || keys.ShiftRight || touch.wheelie) && kind !== 'car' && s.speed > 60 && !braking;
+    s.wheelie = approach(s.wheelie || 0, wantW ? 0.5 : 0, (wantW ? 1.4 : 2.6) * dt);
+    s.wheelieT = s.wheelie > 0.3 ? (s.wheelieT || 0) + dt : 0;
+    s.angle += steer * STEER * (1 + 0.12 * (M - 1)) * dt * sf * (1 - Math.min(Math.abs(s.speed) / (1000 * M), 0.3))
+      * (drifting ? 1.6 : 1) * (s.wheelie > 0.15 ? 0.45 : 1);
+    // Bodenhaftung: die Fahrtrichtung folgt der Blickrichtung – beim Driften nur langsam, das Heck bricht aus
+    if (s.moveAngle === undefined) s.moveAngle = s.angle;
+    const grip = drifting ? 2 : kind === 'car' ? 7 : 10;
+    s.moveAngle += angDiff(s.moveAngle, s.angle) * Math.min(1, grip * dt);
+    // höchstens ~55° quer, damit der Drift kontrollierbar bleibt
+    s.slip = clamp(angDiff(s.moveAngle, s.angle), -0.95, 0.95);
+    s.moveAngle = s.angle - s.slip;
+    s.drifting = drifting;
+    if (Math.abs(s.slip) > 0.25 && s.speed > 80 && Math.random() < dt * 30) {
+      const back = kind === 'car' ? 24 : 15;
+      particles.push({ x: s.x - Math.cos(s.angle) * back + rand(-4, 4), y: s.y - Math.sin(s.angle) * back + rand(-4, 4), vx: rand(-15, 15), vy: rand(-15, 15), life: 0.9, max: 0.9, size: rand(5, 9), color: '#d8d8d8', type: 'smoke' });
+    }
     hint = dealer ? (touchMode ? 'Steig ab (⇅), um mit dem Dealer zu handeln' : 'Steig ab (E), um mit dem Dealer zu handeln') : touchMode ? '' : 'E: Absteigen';
     s.steer = steer;
   } else {
     s.speed = approach(s.speed, 0, 500 * dt);
-    s.steer = 0;
+    s.steer = 0; s.moveAngle = s.angle; s.slip = 0; s.drifting = false;
+    s.wheelie = approach(s.wheelie || 0, 0, 2.6 * dt); s.wheelieT = 0;
     let ix = (rt ? 1 : 0) - (lf ? 1 : 0), iy = (dn ? 1 : 0) - (up ? 1 : 0);
     const l = Math.hypot(ix, iy);
     let sp = indoors ? 105 : 180; // in der Wohnung gehst du langsamer
@@ -944,7 +980,8 @@ function updatePlayer(dt) {
   }
   // Fahrzeug bewegen (auch führerlos ausrollend); in der Wohnung steht es draußen still
   const ox = s.x, oy = s.y;
-  const hit = !indoors && hasVehicle() && moveEntity(s, Math.cos(s.angle) * s.speed * dt, Math.sin(s.angle) * s.speed * dt, vehRadius());
+  const ma = s.moveAngle === undefined ? s.angle : s.moveAngle;
+  const hit = !indoors && hasVehicle() && moveEntity(s, Math.cos(ma) * s.speed * dt, Math.sin(ma) * s.speed * dt, vehRadius());
   if (hit) {
     const M = speedMult(), imp = Math.abs(s.speed) / M, kind = vKind();
     if (player.onScooter && imp > 230) {
@@ -2457,6 +2494,14 @@ function drawHUD() {
     ctx.fillStyle = '#cfd6e0'; ctx.font = '12px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillText('km/h', tx - 54, ty + 30);
   }
 
+  // Wheelie- und Drift-Anzeige
+  if (player.onScooter && state === 'play' && (scooter.wheelieT > 0.4 || scooter.drifting)) {
+    const txt = scooter.wheelieT > 0.4 ? `WHEELIE ${scooter.wheelieT.toFixed(1)} s` : 'DRIFT!';
+    ctx.font = `${Math.min(34, W / 16)}px Impact, Arial Black, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,.8)'; ctx.strokeText(txt, W / 2, H * 0.18);
+    ctx.fillStyle = scooter.wheelieT > 0.4 ? '#ffd166' : '#ff6b6b'; ctx.fillText(txt, W / 2, H * 0.18);
+  }
+
   // Festnahme-Balken
   if (bustTimer > 0.05) {
     ctx.fillStyle = 'rgba(0,0,0,.6)'; rrect(W / 2 - 110, H * 0.62, 220, 36, 8); ctx.fill();
@@ -3578,8 +3623,12 @@ function render3D(dt) {
   const veh = isMoped ? mopedMesh : isCar ? carMesh : scooterMesh;
   scooterMesh.visible = kind === 'scooter'; mopedMesh.visible = isMoped; carMesh.visible = isCar;
   if (kind === 'scooter') scooterMesh.userData.accent.color.setHex(VEH[vehicle].color);
-  veh.position.set(scooter.x, gS, scooter.y);
-  veh.rotation.set(isCar ? 0 : leanVis, -scooter.angle, 0);
+  // Wheelie: um das Hinterrad drehen (Drehpunkt im Fahrzeug: xr, yr)
+  const wh = isCar ? 0 : (scooter.wheelie || 0), [pxr, pyr] = isMoped ? [-20, 7] : [-15, 4];
+  const rotP = (lx, ly) => [pxr + (lx - pxr) * Math.cos(wh) - (ly - pyr) * Math.sin(wh), pyr + (lx - pxr) * Math.sin(wh) + (ly - pyr) * Math.cos(wh)];
+  const [vdx, vdy] = rotP(0, 0), ca = Math.cos(scooter.angle), sa = Math.sin(scooter.angle);
+  veh.position.set(scooter.x + ca * vdx, gS + vdy, scooter.y + sa * vdx);
+  veh.rotation.set(isCar ? 0 : leanVis, -scooter.angle, wh);
   if (veh.userData.steer) veh.userData.steer.rotation.y = -steerVis * 0.5;
   showMoped.visible = BIG || !isMoped;
   for (const d of showItems) d.rotation.y = time * 0.5;
@@ -3590,9 +3639,11 @@ function render3D(dt) {
   if (player.onScooter) {
     // Fahrer neigt sich mit dem Roller in die Kurve
     const back = isMoped ? 12 : 2;
-    playerMesh.position.set(scooter.x - Math.cos(scooter.angle) * back, gS + (isMoped ? 13 : 6.5), scooter.y - Math.sin(scooter.angle) * back);
+    const [rdx, rdy] = rotP(-back, isMoped ? 13 : 6.5);
+    playerMesh.position.set(scooter.x + ca * rdx, gS + rdy, scooter.y + sa * rdx);
     posePerson(playerMesh, scooter.angle, player.aim, true, 0, false);
     playerMesh.rotation.x = leanVis;
+    playerMesh.rotation.z = wh * 0.8;
     playerMesh.visible = !isCar; // im Auto sitzt man drin
     if (isMoped) { playerMesh.userData.legL.rotation.z = playerMesh.userData.legR.rotation.z = 1.25; }
     if (!WEAPONS[player.weapon].dmg) playerMesh.userData.armR.rotation.y = -0.25 - steerVis * 0.3;
@@ -3600,7 +3651,7 @@ function render3D(dt) {
   } else {
     playerMesh.position.set(player.x, groundH(player.x, player.y), player.y);
     posePerson(playerMesh, player.aim, player.aim, false, player.walkT, moving);
-    playerMesh.rotation.x = 0;
+    playerMesh.rotation.x = 0; playerMesh.rotation.z = 0;
   }
   dealerMeshes.forEach((g, i) => {
     const d = dealers[i], dp = dist(d, player);
