@@ -41,6 +41,9 @@
   .item small { color: #9aa6b8; font-variant-numeric: tabular-nums; }
   .item button { font-size: 15px; padding: 9px 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .item button.buy { background: linear-gradient(90deg,#ffd166,#f0b43c); color: #2a1d00; }
+  .sec { margin: 6px 2px 0; font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #9aa6b8; }
+  .item b .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.4); }
+  .item button.warn { background: linear-gradient(90deg,#ff6b6b,#d63c3c); color: #2a0606; }
   #shopClose { background: #2a3342; color: #fff; width: 100%; position: sticky; bottom: 0; box-shadow: 0 -8px 16px rgba(20,24,32,.9); }
   body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   #rules { margin-bottom: 16px; }
@@ -89,7 +92,7 @@
       <b>So spielst du auf dem Handy</b> (am besten quer halten):<br>
       Linker Daumen: fahren / laufen · Rechter Daumen: zielen, weit ziehen = schießen ·
       Oben wischen: umsehen · Runde Tasten: Aktion (Auf/Ab, Läden, Tür), Waffe, Gang, Bremse, Wheelie (↥ halten), Pause.
-      Bremse halten und dabei lenken = Driften.
+      Bremse halten und dabei lenken = Driften. Stick ganz rausziehen = rennen.
     </div>
     <table class="desktop-only">
       <tr><td>W / ↑</td><td>Gas geben (Roller) / laufen</td></tr>
@@ -103,7 +106,7 @@
       <tr><td>Q</td><td>Auf dem Roller: Gang wechseln · zu Fuß: Waffe wechseln</td></tr>
       <tr><td>1–6 / Mausrad</td><td>Waffe wechseln</td></tr>
       <tr><td>Leertaste</td><td>Vollbremsung · beim Lenken mit Tempo: Driften</td></tr>
-      <tr><td>Umschalt (Shift) halten</td><td>Wheelie (Roller und Moped)</td></tr>
+      <tr><td>Umschalt (Shift) halten</td><td>Wheelie (Roller und Moped) · zu Fuß: rennen</td></tr>
       <tr><td>P / Esc &nbsp; M</td><td>Pause &nbsp;·&nbsp; Ton an/aus</td></tr>
     </table>
     <details id="rules" open><summary>Spielregeln &amp; Tipps</summary>
@@ -217,7 +220,8 @@ const fountains = [];
 const SPECIAL = BIG ? {
   police: { bx: 2, by: 2 }, hospital: { bx: 9, by: 8 }, garages: [{ bx: 3, by: 9 }], autohaus: { bx: 10, by: 4 },
   scootershop: { bx: 8, by: 2 }, tuneshop: { bx: 1, by: 6 }, home: { bx: 5, by: 6 }, prison: { bx: 0, by: 11 },
-} : { police: { bx: 1, by: 1 }, hospital: { bx: 4, by: 3 }, garages: [{ bx: 3, by: 1 }, { bx: 1, by: 4 }], autohaus: { bx: 5, by: 2 } };
+  gas: [{ bx: 2, by: 5 }, { bx: 9, by: 1 }, { bx: 7, by: 10 }],
+} : { police: { bx: 1, by: 1 }, hospital: { bx: 4, by: 3 }, garages: [{ bx: 3, by: 1 }, { bx: 1, by: 4 }], autohaus: { bx: 5, by: 2 }, gas: [{ bx: 2, by: 4 }] };
 const POLICE_BLOCK = SPECIAL.police, HOSPITAL_BLOCK = SPECIAL.hospital, GARAGE_BLOCKS = SPECIAL.garages, AUTOHAUS_BLOCK = SPECIAL.autohaus;
 // Downtown: die inneren 4 × 4 Blöcke der Großstadt mit Hochhäusern
 const isDowntown = (bx, by) => BIG && bx >= 4 && bx <= 7 && by >= 4 && by <= 7;
@@ -234,7 +238,7 @@ const tileAtPx = (x, y) => tileAt(Math.floor(x / TILE), Math.floor(y / TILE));
     const r = rng();
     let k = isDowntown(bx, by) ? 'build' : r < (BIG ? 0.12 : 0.17) ? 'park' : r < (BIG ? 0.17 : 0.24) ? 'plaza' : 'build';
     for (const [name, b] of Object.entries(SPECIAL)) {
-      if (name === 'garages') { if (b.some(g => g.bx === bx && g.by === by)) k = 'garage'; }
+      if (Array.isArray(b)) { if (b.some(g => g.bx === bx && g.by === by)) k = name === 'garages' ? 'garage' : 'gas'; }
       else if (b.bx === bx && b.by === by) k = name;
     }
     blockKind[by * BLOCKS + bx] = k;
@@ -246,7 +250,8 @@ const tileAtPx = (x, y) => tileAt(Math.floor(x / TILE), Math.floor(y / TILE));
     else if (mx === 2 || mx === 9 || my === 2 || my === 9) t = WALK;
     else {
       const k = blockKind[Math.floor(y / 10) * BLOCKS + Math.floor(x / 10)];
-      t = k === 'park' ? PARK : k === 'plaza' ? WALK : BUILD;
+      // Tankstelle: Shop in den ersten zwei Reihen, davor befahrbarer Platz mit Zapfsäulen
+      t = k === 'park' ? PARK : k === 'plaza' ? WALK : k === 'gas' ? (my < 5 ? BUILD : WALK) : BUILD;
     }
     map[y * N + x] = t;
   }
@@ -260,6 +265,7 @@ const tileAtPx = (x, y) => tileAt(Math.floor(x / TILE), Math.floor(y / TILE));
       continue;
     }
     if (k === 'plaza') { fountains.push({ x: (x0 + 3) * TILE, y: (y0 + 3) * TILE }); continue; }
+    if (k === 'gas') continue;
     const L = rng();
     let rects;
     if (k !== 'build' || L < 0.2) rects = [[0, 0, 6, 6]];
@@ -629,7 +635,7 @@ function touchButtons() {
   return [
     Object.assign({ id: 'TouchE', x: L.E[0], y: L.E[1], r }, ({
       door: { label: '⇡', sub: 'Tor' }, garage: { label: 'W', sub: 'Werkstatt' }, auto: { label: 'A', sub: 'Autohaus' }, dealer: { label: '$', sub: 'Dealer' },
-      scooter: { label: 'S', sub: 'Laden' }, tune: { label: 'T', sub: 'Tuning' }, home: { label: '⌂', sub: 'Haus' }, atm: { label: '€', sub: 'Knacken' },
+      scooter: { label: 'S', sub: 'Laden' }, gas: { label: 'G', sub: 'Tanke' }, tune: { label: 'T', sub: 'Tuning' }, home: { label: '⌂', sub: 'Haus' }, atm: { label: '€', sub: 'Knacken' },
       exit: { label: '→', sub: 'Umzug' }, safe: { label: '▣', sub: 'Tresor' }, keys: { label: 'K', sub: 'Schlüssel' }, leave: { label: '⌂', sub: 'Raus' },
     })[interactCtx()] || { label: '⇅', sub: player && player.onScooter ? 'Ab' : 'Auf' }),
     { id: 'TouchW', x: L.Wp[0], y: L.Wp[1], r: r * 0.85, label: '⟳', sub: 'Waffe' },
@@ -901,6 +907,10 @@ function updatePlayer(dt) {
       case 'scooter': if (!blocked()) { openMenu('scooter'); return; } break;
       case 'tune': if (!blocked()) { openMenu('tune'); return; } break;
       case 'garage': openMenu('garage'); return;
+      case 'gas':
+        if (wanted > 0) toast('Mit Sternen bedient dich hier keiner!', '#ff6b6b');
+        else { menuStation = gasStations.find(g => dist(player, g) < 60); openMenu('gas'); return; }
+        break;
       case 'home':
         if (wanted > 0) toast('Mit Sternen kannst du nicht nach Hause – die Polizei würde dich finden.', '#ff6b6b');
         else if (player.onScooter) toast('Steig erst ab.', '#ffb347');
@@ -969,12 +979,24 @@ function updatePlayer(dt) {
     s.wheelie = approach(s.wheelie || 0, 0, 2.6 * dt); s.wheelieT = 0;
     let ix = (rt ? 1 : 0) - (lf ? 1 : 0), iy = (dn ? 1 : 0) - (up ? 1 : 0);
     const l = Math.hypot(ix, iy);
-    let sp = indoors ? 105 : 180; // in der Wohnung gehst du langsamer
-    if (l > 0) { const a = screenToWorldAngle(Math.atan2(iy, ix)); ix = Math.cos(a); iy = Math.sin(a); player.walkT += dt * 10; }
-    else if (mv.m > 0.15) { ix = Math.cos(mv.a); iy = Math.sin(mv.a); sp *= mv.m; player.walkT += dt * 10 * mv.m; }
+    // In der Wohnung gehst du langsamer; Umschalt (bzw. Stick ganz rausziehen) = rennen
+    let sp = indoors ? 105 : (keys.ShiftLeft || keys.ShiftRight) ? 265 : 180;
+    if (l > 0) { const a = screenToWorldAngle(Math.atan2(iy, ix)); ix = Math.cos(a); iy = Math.sin(a); }
+    else if (mv.m > 0.15) { ix = Math.cos(mv.a); iy = Math.sin(mv.a); sp = mv.m > 0.95 && !indoors ? 250 : sp * mv.m; }
+    else { ix = 0; iy = 0; }
+    // weich anlaufen und abbremsen statt ruckartig
+    player.mvx = lerp(player.mvx || 0, ix * sp, Math.min(1, dt * 14));
+    player.mvy = lerp(player.mvy || 0, iy * sp, Math.min(1, dt * 14));
     const ox = player.x, oy = player.y;
-    moveEntity(player, ix * sp * dt, iy * sp * dt, 10);
+    moveEntity(player, player.mvx * dt, player.mvy * dt, 10);
     player.vx = (player.x - ox) / dt; player.vy = (player.y - oy) / dt;
+    const spd = Math.hypot(player.vx, player.vy);
+    player.walkT += dt * spd / 17;
+    // Blickrichtung: mit gezogener Waffe zum Ziel, sonst in Laufrichtung (kein Rückwärts-/Seitwärtslaufen mehr)
+    const aiming = touchMode ? am.m > 0.2 : WEAPONS[player.weapon].dmg > 0 && !indoors;
+    if (player.face === undefined) player.face = player.aim;
+    if (aiming) player.face = player.aim;
+    else if (spd > 20) player.face += angDiff(player.face, Math.atan2(player.vy, player.vx)) * Math.min(1, dt * 12);
     if (!indoors && hasVehicle() && dist(player, scooter) < (vKind() === 'car' ? 62 : 50)) hint = touchMode ? 'Tippe ⇅ zum Einsteigen' : (vKind() === 'car' ? 'E: Einsteigen' : 'E: Aufsteigen');
     if (dealer) hint = wanted > 0 ? 'Der Dealer handelt nicht, solange du gesucht wirst' : touchMode ? 'Tippe $ für den Dealer-Shop' : 'E: Mit dem Dealer handeln';
   }
@@ -1005,6 +1027,7 @@ function updatePlayer(dt) {
     garage: T ? 'Tippe „Werkstatt“ zum Tunen' : 'E: Werkstatt-Menü',
     auto: shopHint('Autohaus', BIG ? 'E: Autohaus – Sportwagen ansehen' : 'E: Autohaus – E-Moped ansehen'),
     scooter: shopHint('Laden', 'E: Scooter-Laden'),
+    gas: robbing ? '' : wanted > 0 ? 'Mit Sternen bedient dich hier keiner' : T ? 'Tippe „Tanke“ – Essen, Kosmetik, Kasse' : 'E: Tankstelle – Essen, Kosmetik, Kasse',
     tune: shopHint('Tuning', 'E: Tune-Shop'),
     home: wanted > 0 ? 'Mit Sternen kommst du nicht rein' : player.onScooter ? 'Steig ab, um reinzugehen' : T ? 'Tippe „Haus“' : 'E: Nach Hause gehen',
     atm: robbing ? '' : T ? 'Tippe „Knacken“ – Automat aufbrechen' : 'E: Automat aufbrechen',
@@ -1719,6 +1742,7 @@ function interactCtx() {
     if (dist(player, homeDoor) < 60) return 'home';
     if (!player.onScooter && atms.some(m => dist(player, m) < 42)) return 'atm';
   } else if (dist(player, townExit) < 150) return 'exit';
+  if (!player.onScooter && gasStations.some(g => dist(player, g) < 60)) return 'gas';
   if (!player.onScooter && dealers.some(d => dist(d, player) < 60)) return 'dealer';
   return null;
 }
@@ -1776,6 +1800,37 @@ function leaveHome() {
   cam.x = player.x; cam.y = player.y; camYaw = Math.PI / 2; lookYaw = 0;
 }
 
+
+// ---------- Tankstellen: Shop mit Essen und Kosmetik, Kasse zum Ausrauben ----------
+const gasStations = (SPECIAL.gas || []).map(b => ({
+  x0: b.bx * 10 + 3, y0: b.by * 10 + 3,
+  x: (b.bx * 10 + 6) * TILE, y: (b.by * 10 + 5) * TILE + 50, // Platz vor dem Verkaufsfenster
+  cool: 0,
+}));
+let menuStation = null;
+const FOOD = [
+  { id: 'water', name: 'Wasser', hp: 10, price: 10 },
+  { id: 'sandwich', name: 'Sandwich', hp: 25, price: 30 },
+  { id: 'pizza', name: 'Pizza', hp: 50, price: 60 },
+  { id: 'menu', name: 'Burger-Menü', hp: 100, price: 100 },
+];
+const COSMETICS = [
+  { id: 'cap_red', slot: 'hat', name: 'Cap (rot)', color: 0xc0392b, price: 80 },
+  { id: 'cap_blue', slot: 'hat', name: 'Cap (blau)', color: 0x1f5fc8, price: 80 },
+  { id: 'cap_black', slot: 'hat', name: 'Cap (schwarz)', color: 0x1b1b1b, price: 80 },
+  { id: 'helmet', slot: 'hat', name: 'Roller-Helm', color: 0xf1f1f1, price: 150 },
+  { id: 'shades', slot: 'eyes', name: 'Sonnenbrille', price: 120 },
+  { id: 'backpack', slot: 'back', name: 'Rucksack', color: 0x2e7d4f, price: 180 },
+  { id: 'jacket_black', slot: 'shirt', name: 'Jacke (schwarz)', color: 0x2a2e35, price: 200 },
+  { id: 'jacket_blue', slot: 'shirt', name: 'Jacke (blau)', color: 0x2f5fb0, price: 200 },
+  { id: 'hoodie_pink', slot: 'shirt', name: 'Hoodie (pink)', color: 0xe84a8a, price: 200 },
+  { id: 'deck_gold', slot: 'deck', name: 'Roller-Folie Gold', color: 0xd4af37, price: 250 },
+  { id: 'deck_camo', slot: 'deck', name: 'Roller-Folie Tarn', color: 0x55663f, price: 250 },
+  { id: 'deck_neon', slot: 'deck', name: 'Roller-Folie Neon', color: 0x39ff14, price: 250 },
+];
+let cosm = Object.assign({ owned: [], hat: null, eyes: null, back: null, shirt: null, deck: null }, load('cosm', {}));
+const cosmItem = slot => COSMETICS.find(c => c.id === cosm[slot]);
+
 // ---------- Automaten zum Aufbrechen ----------
 const atms = [];
 if (BIG) {
@@ -1805,12 +1860,20 @@ function startRob(m) {
 }
 function updateRob(dt) {
   for (const m of atms) if (m.cool > 0) m.cool -= dt;
+  for (const g of gasStations) if (g.cool > 0) g.cool -= dt;
   if (!robbing) return;
   if (player.onScooter || dist(player, robbing.m) > 55) { robbing = null; toast('Aufbrechen abgebrochen.', '#ffb347'); return; }
   robbing.t += dt;
   if (Math.random() < dt * 5) Snd.clank();
   if (robbing.t < robbing.dur) return;
   const m = robbing.m, atm = m.type === 'atm';
+  if (robbing.gas) {
+    robbing = null;
+    addMoney(Math.round(rand(300, 650)), m.x, m.y);
+    m.cool = 240;
+    setWanted(Math.max(2, wanted), 'Tankstelle ausgeraubt! Der Kassierer ruft die Polizei.');
+    return;
+  }
   robbing = null;
   addMoney(Math.round(atm ? rand(120, 260) : rand(35, 90)), m.x, m.y);
   m.cool = 180;
@@ -1887,6 +1950,23 @@ function handleCityBuy(id) {
     player.ammo[w] = (player.ammo[w] || 0) + stash[w]; delete stash[w]; player.weapon = w;
     saveStash(); Snd.pickup(); return true;
   } else if (id === 'move') { startMove(); return true; }
+  else if (id.startsWith('food:')) {
+    const f = FOOD.find(x => x.id === id.slice(5));
+    addMoney(-f.price); player.hp = Math.min(100, player.hp + f.hp);
+    toast(`${f.name} – lecker! +${f.hp} Gesundheit`, '#3dd68c');
+    return true;
+  } else if (id.startsWith('cos:')) {
+    const c = COSMETICS.find(x => x.id === id.slice(4));
+    if (!cosm.owned.includes(c.id)) { addMoney(-c.price); cosm.owned.push(c.id); cosm[c.slot] = c.id; }
+    else cosm[c.slot] = cosm[c.slot] === c.id ? null : c.id;
+    save('cosm', cosm); Snd.pickup();
+    return true;
+  } else if (id === 'robgas') {
+    closeShop();
+    robbing = { m: menuStation, t: 0, dur: 5, gas: true };
+    toast('Überfall! Der Kassierer hebt die Hände …', '#ff6b6b');
+    return true;
+  }
   else return false;
   saveGarage(); rebuildPlayerCar(); Snd.cash();
   return true;
@@ -2090,6 +2170,24 @@ function renderMenu() {
   const buyBtn = (key, price, label = 'Kaufen', lock = '') => lock ? `<button disabled>${lock}</button>`
     : `<button class="buy" data-buy="${key}" ${money < price ? 'disabled' : ''}>${label} · ${fmtMoney(price)}</button>`;
   const useBtn = id => vehicle === id ? '<button disabled>Aktiv ✓</button>' : `<button data-buy="use:${id}">Fahren</button>`;
+  if (menuKind === 'gas') {
+    title.textContent = 'TANKSTELLE 24/7';
+    sub.textContent = `Gesundheit: ${Math.ceil(player.hp)} / 100`;
+    let html = '<div class="sec">Essen &amp; Trinken</div>';
+    for (const f of FOOD) html += row(f.name, `+${f.hp} Gesundheit`, buyBtn('food:' + f.id, f.price, 'Essen', player.hp >= 100 ? 'Schon satt' : ''));
+    html += '<div class="sec">Kosmetik</div>';
+    for (const c of COSMETICS) {
+      const has = cosm.owned.includes(c.id), worn = cosm[c.slot] === c.id;
+      const sw = c.color !== undefined ? `<span class="dot" style="background:#${c.color.toString(16).padStart(6, '0')}"></span>` : '';
+      html += row(sw + c.name, has ? (worn ? 'Trägst du gerade' : 'Gehört dir') : c.slot === 'deck' ? 'Farbe für dein Roller-Trittbrett' : 'Für deine Figur',
+        has ? `<button data-buy="cos:${c.id}">${worn ? 'Ablegen' : 'Anziehen'}</button>` : buyBtn('cos:' + c.id, c.price), worn);
+    }
+    const st = menuStation, armed = WEAPONS[player.weapon].dmg > 0;
+    html += '<div class="sec">Kasse</div>' + row('Kasse ausrauben', st && st.cool > 0 ? 'Die Kasse ist leer – komm später wieder.' : 'Bleib 5 Sekunden stehen. Danach: 2 Sterne!',
+      `<button class="warn" data-buy="robgas" ${!armed || (st && st.cool > 0) ? 'disabled' : ''}>${armed ? 'Überfallen' : 'Nur mit Waffe'}</button>`);
+    shopList.innerHTML = html;
+    return;
+  }
   if (menuKind === 'scooter') {
     title.textContent = 'SCOOTER-LADEN';
     sub.textContent = 'Kauf dir einen Roller. Hast du alle drei, gibt es hier das E-Moped.';
@@ -2412,7 +2510,7 @@ function drawHUD() {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   const pois = garages.map(g => [g.door, '#ffb347', 'W']).concat(BIG
     ? [[autohaus, '#6fc3ff', 'A'], [scooterShop, '#3dd68c', 'S'], [tuneShop, '#ff4fd8', 'T'], [homeDoor, '#ffd166', '⌂']]
-    : [[autohaus, '#6fc3ff', 'A'], [townExit, '#8ab4ff', '→']]);
+    : [[autohaus, '#6fc3ff', 'A'], [townExit, '#8ab4ff', '→']]).concat(gasStations.map(g => [g, '#ff7a45', 'G']));
   for (const [p, c, t] of pois) {
     const [px, py] = dot(p.x, p.y, 6.5, '#1b1f27');
     ctx.fillStyle = c; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.fillText(t, px, py + 0.5);
@@ -2514,7 +2612,7 @@ function drawHUD() {
     ctx.fillStyle = 'rgba(0,0,0,.6)'; rrect(W / 2 - 110, H * 0.62, 220, 36, 8); ctx.fill();
     ctx.fillStyle = '#ffd166'; ctx.fillRect(W / 2 - 100, H * 0.62 + 24, 200 * Math.min(1, robbing.t / robbing.dur), 6);
     ctx.fillStyle = '#fff'; ctx.font = 'bold 13px system-ui, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(robbing.m.type === 'atm' ? 'Geldautomat knacken … bleib stehen' : 'Automat aufbrechen … bleib stehen', W / 2, H * 0.62 + 12);
+    ctx.fillText(robbing.gas ? 'Überfall läuft … bleib stehen' : robbing.m.type === 'atm' ? 'Geldautomat knacken … bleib stehen' : 'Automat aufbrechen … bleib stehen', W / 2, H * 0.62 + 12);
   }
   if (indoors) {
     ctx.font = 'bold 13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -2975,23 +3073,41 @@ function makePerson(shirt = ORANGE, pants = PANTS, hairMat = HAIR) {
   g.traverse(o => { if (o.isMesh) o.castShadow = !LOW_GFX; });
   return g;
 }
+const scooterWheelGeo = new THREE.CylinderGeometry(4.2, 4.2, 2.8, 16), scooterHubGeo = new THREE.CylinderGeometry(2.2, 2.2, 3.2, 10);
+function scooterWheel(parent, x) {
+  const tire = new THREE.Mesh(scooterWheelGeo, mat(0x111111)); tire.rotation.x = Math.PI / 2; tire.position.set(x, 4.2, 0);
+  const hub = new THREE.Mesh(scooterHubGeo, mat(0x8a929c)); hub.rotation.x = Math.PI / 2; hub.position.set(x, 4.2, 0);
+  parent.add(tire, hub);
+}
 function makeScooter() {
   const g = new THREE.Group();
-  g.add(box(30, 3, 9, mat(0x1d2228), 0, 5, 0));
+  const deck = new THREE.MeshLambertMaterial({ color: 0x1d2228 });
+  g.add(box(30, 3, 9, deck, 0, 5.5, 0));                               // Trittbrett
+  g.add(box(26, 0.5, 7.5, mat(0x0c0d0f), -1, 7.2, 0));                 // Griptape
   const accent = new THREE.MeshBasicMaterial({ color: 0x3dd68c });
-  g.add(box(24, 0.8, 3, accent, -1, 6.8, 0));
-  g.userData.accent = accent;
-  const wheelGeo = new THREE.CylinderGeometry(4, 4, 3, 14);
-  const rear = new THREE.Mesh(wheelGeo, mat(0x111111)); rear.rotation.x = Math.PI / 2; rear.position.set(-15, 4, 0); g.add(rear);
-  g.add(box(9, 1.2, 4, mat(0x1d2228), -15, 8.6, 0));
-  // Lenkeinheit (Vorderrad, Lenkstange, Lenker) dreht sich beim Lenken mit
+  g.add(box(26, 1, 0.6, accent, -1, 5.5, 4.7), box(26, 1, 0.6, accent, -1, 5.5, -4.7)); // Leuchtstreifen an den Seiten
+  g.add(box(18, 2.5, 6.5, mat(0x2b2f36), 0, 3, 0));                    // Akku unter dem Brett
+  scooterWheel(g, -15.5);
+  g.add(box(10, 1.2, 5, deck, -15.5, 9.3, 0), box(1.2, 3, 5, deck, -20.2, 7.8, 0)); // hinteres Schutzblech
+  g.add(box(0.8, 1.6, 3.5, new THREE.MeshBasicMaterial({ color: 0xff2a2a }), -21, 8.2, 0)); // Rücklicht
+  g.add(box(0.6, 3, 4.5, mat(0x2f6fd8), -21.1, 5.4, 0));               // Versicherungskennzeichen
+  g.add(box(1, 1, 1, mat(0xff9a1f), -8, 5.5, 4.9), box(1, 1, 1, mat(0xff9a1f), -8, 5.5, -4.9)); // Reflektoren
+  const stand = box(8, 0.8, 0.8, mat(0x6b7280), -3, 2.2, -5.2); stand.rotation.y = 0.5; stand.rotation.z = -0.25; g.add(stand); // Seitenständer
+  // Lenkeinheit (Vorderrad, Federung, Lenkstange, Lenker) dreht sich beim Lenken mit
   const steer = new THREE.Group(); steer.position.set(15, 0, 0); g.add(steer);
-  const front = new THREE.Mesh(wheelGeo, mat(0x111111)); front.rotation.x = Math.PI / 2; front.position.set(0, 4, 0); steer.add(front);
+  scooterWheel(steer, 0);
+  steer.add(box(8, 1.2, 5, deck, 0, 9.3, 0));                           // vorderes Schutzblech
+  const spring = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 7, 8), mat(0xd4af37)); spring.position.set(0.8, 9, 3); steer.add(spring);
   const stem = box(2.5, 36, 2.5, mat(0x9aa3ad), 1.5, 22, 0); stem.rotation.z = -0.12; steer.add(stem);
-  steer.add(box(2.2, 2.2, 22, mat(0xc3cad2), 3, 40, 0));
-  steer.add(box(3, 3, 3.5, mat(0x222222), 3, 40, -12), box(3, 3, 3.5, mat(0x222222), 3, 40, 12));
-  steer.add(box(1, 2.5, 3, new THREE.MeshBasicMaterial({ color: 0xfffbe0 }), 3.5, 34, 0));
-  g.userData.steer = steer;
+  steer.add(box(4, 3, 3.2, mat(0x3a3f47), 0.4, 11.5, 0));               // Klappgelenk
+  steer.add(box(2.2, 2.2, 22, mat(0xc3cad2), 3, 40, 0));                // Lenker
+  steer.add(box(3.2, 3.2, 4, mat(0x222222), 3, 40, -12), box(3.2, 3.2, 4, mat(0x222222), 3, 40, 12)); // Griffe
+  const lever = mat(0x9aa3ad);
+  steer.add(box(5, 0.6, 0.8, lever, 5.5, 40.5, -9.5), box(5, 0.6, 0.8, lever, 5.5, 40.5, 9.5)); // Bremshebel
+  const bell = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 1, 10), mat(0xd4af37)); bell.position.set(3, 42, -6); steer.add(bell);
+  steer.add(box(3, 1, 4, mat(0x111111), 3.2, 41.7, 0), box(0.3, 0.8, 3, new THREE.MeshBasicMaterial({ color: 0x7ee08a }), 4.8, 41.8, 0)); // Display
+  steer.add(box(1, 2.5, 3.5, new THREE.MeshBasicMaterial({ color: 0xfffbe0 }), 3.8, 34, 0)); // Scheinwerfer
+  g.userData.steer = steer; g.userData.deck = deck; g.userData.accent = accent;
   g.rotation.order = 'YXZ';
   g.traverse(o => { if (o.isMesh) o.castShadow = !LOW_GFX; });
   return g;
@@ -3168,6 +3284,66 @@ if (!BIG) {
   ring.rotation.x = -Math.PI / 2; ring.position.set(townExit.x, 0.6, townExit.y); scene.add(ring);
 }
 
+
+// ---------- Tankstellen ----------
+const gasFrontTex = canvasTex(384, 64, (g) => {
+  g.fillStyle = '#f2f2f0'; g.fillRect(0, 0, 384, 64);
+  const gr = g.createLinearGradient(0, 16, 0, 64); gr.addColorStop(0, '#bfe0ff'); gr.addColorStop(1, '#5c83a6');
+  g.fillStyle = gr; g.fillRect(12, 18, 150, 44); g.fillRect(222, 18, 150, 44);
+  g.fillStyle = '#2c3440'; g.fillRect(172, 20, 40, 44);                    // Tür
+  g.fillStyle = 'rgba(255,255,255,.35)'; g.fillRect(20, 22, 60, 6); g.fillRect(230, 22, 60, 6);
+  g.fillStyle = '#d62828'; g.fillRect(0, 0, 384, 14);
+  g.fillStyle = '#fff'; g.font = 'bold 12px Arial Black, Impact, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('SHOP 24/7 · SNACKS · KAFFEE · E-LADEN', 192, 8);
+});
+const gasPriceTex = canvasTex(128, 160, (g) => {
+  g.fillStyle = '#1b2a4a'; g.fillRect(0, 0, 128, 160);
+  g.fillStyle = '#d62828'; g.fillRect(0, 0, 128, 34);
+  g.fillStyle = '#fff'; g.font = 'bold 22px Impact, Arial Black, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('TANKE', 64, 18);
+  g.font = 'bold 15px Arial, sans-serif'; g.textAlign = 'left';
+  [['SUPER', '1,79'], ['DIESEL', '1,69'], ['E-LADEN', '0,49']].forEach(([n, p], i) => {
+    g.fillStyle = '#cfd6e0'; g.fillText(n, 8, 58 + i * 36);
+    g.fillStyle = '#ffd166'; g.textAlign = 'right'; g.fillText(p, 120, 58 + i * 36); g.textAlign = 'left';
+  });
+});
+const gasMeshes = gasStations.map(gs => {
+  const X0 = gs.x0 * TILE, Y0 = gs.y0 * TILE, F = CURB, cx = X0 + 192;
+  const white = mat(0xf2f2f0), red = mat(0xd62828), steel = mat(0xbfc3c9);
+  // Shop (die ersten zwei Reihen des Blocks) mit Schaufensterfront nach Süden
+  const shop = new THREE.Mesh(new THREE.BoxGeometry(382, 64, 126), [white, white, mat(0xcfcfcf), white, new THREE.MeshLambertMaterial({ map: gasFrontTex }), white]);
+  shop.position.set(cx, 32, Y0 + 64); shop.castShadow = shop.receiveShadow = !LOW_GFX; scene.add(shop);
+  scene.add(box(386, 8, 130, red, cx, 66, Y0 + 64));
+  // Dach über den Zapfsäulen
+  const cz = Y0 + 4.3 * TILE;
+  scene.add(box(300, 10, 170, white, cx, F + 80, cz), box(304, 7, 174, red, cx, F + 73, cz));
+  for (const [dx, dz] of [[-120, -60], [120, -60], [-120, 60], [120, 60]]) scene.add(box(8, 72, 8, steel, cx + dx, F + 36, cz + dz));
+  // Zapfsäulen-Inseln
+  for (const dx of [-70, 70]) {
+    scene.add(box(84, 8, 24, mat(0x9aa0a6), cx + dx, F + 4, cz));
+    for (const ox of [-24, 24]) scene.add(box(14, 38, 12, red, cx + dx + ox, F + 27, cz), box(10, 7, 1, new THREE.MeshBasicMaterial({ color: 0x7ee08a }), cx + dx + ox, F + 37, cz + 6.2));
+  }
+  // Preisschild an der Ecke
+  scene.add(box(6, 110, 6, mat(0x8d9096), X0 + 24, 55, Y0 + 5.6 * TILE));
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(48, 60), new THREE.MeshBasicMaterial({ map: gasPriceTex, side: THREE.DoubleSide }));
+  sign.position.set(X0 + 24, 100, Y0 + 5.6 * TILE + 3.5); scene.add(sign);
+  // Kassierer am Verkaufsfenster
+  const cashier = makePerson(red, mat(0x1b1d22), mat(0x5b3a1e));
+  cashier.position.set(gs.x, F, (gs.y0 + 2) * TILE + 10); cashier.rotation.y = -Math.PI / 2;
+  cashier.userData.gun.visible = false;
+  scene.add(cashier, box(46, 22, 10, mat(0x6d4c41), gs.x, F + 11, (gs.y0 + 2) * TILE + 24));
+  const ring = new THREE.Mesh(new THREE.RingGeometry(20, 25, 32), new THREE.MeshBasicMaterial({ color: 0xff7a45, transparent: true, opacity: 0.6, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2; ring.position.set(gs.x, F + 0.6, gs.y); scene.add(ring);
+  return { cashier };
+});
+function syncGas() {
+  gasStations.forEach((gs, i) => {
+    const robbed = robbing && robbing.gas && robbing.m === gs, u = gasMeshes[i].cashier.userData;
+    // beim Überfall hebt der Kassierer die Hände
+    u.armL.rotation.z = u.armR.rotation.z = robbed ? 2.7 : -1.2;
+  });
+}
+
 // ---------- Automaten ----------
 const atmMeshes = atms.map(m => {
   const g = new THREE.Group();
@@ -3239,6 +3415,24 @@ function syncCity() {
 
 const playerMesh = makePerson();
 playerMesh.rotation.order = 'YXZ';
+// Kosmetik-Teile an der Spielfigur (werden je nach Auswahl ein- und ausgeblendet)
+const capMat = new THREE.MeshLambertMaterial({ color: 0xc0392b }), packMat = new THREE.MeshLambertMaterial({ color: 0x2e7d4f });
+const cosParts = {
+  cap: (() => { const c = new THREE.Group(); c.add(box(12, 4, 12.5, capMat, -0.5, 42.2, 0), box(7, 1, 10, capMat, 6.5, 40.6, 0)); return c; })(),
+  helmet: (() => { const h = new THREE.Mesh(new THREE.SphereGeometry(7.2, 14, 10, 0, TAU, 0, Math.PI / 2), mat(0xf1f1f1)); h.position.set(0, 37.5, 0); h.scale.set(1, 1.05, 1); return h; })(),
+  shades: (() => { const sg = new THREE.Group(); sg.add(box(1.4, 2.2, 9.6, mat(0x111111), 5.6, 37.6, 0)); return sg; })(),
+  pack: (() => { const b = new THREE.Group(); b.add(box(6, 13, 10, packMat, -7, 26, 0), box(1, 10, 1, mat(0x111111), -3.6, 27, 4.4), box(1, 10, 1, mat(0x111111), -3.6, 27, -4.4)); return b; })(),
+};
+for (const k in cosParts) { cosParts[k].traverse(o => { if (o.isMesh) o.castShadow = !LOW_GFX; }); playerMesh.add(cosParts[k]); }
+function syncCosmetics() {
+  const hat = cosmItem('hat');
+  cosParts.cap.visible = !!hat && hat.id !== 'helmet';
+  cosParts.helmet.visible = !!hat && hat.id === 'helmet';
+  if (hat && hat.id !== 'helmet') capMat.color.setHex(hat.color);
+  cosParts.shades.visible = !!cosm.eyes;
+  cosParts.pack.visible = !!cosm.back;
+  ORANGE.color.setHex(cosmItem('shirt') ? cosmItem('shirt').color : 0xe8742a);
+}
 function makeMoped() {
   const g = new THREE.Group();
   const red = mat(0xd6322f), dark = mat(0x1d2228), wheelGeo = new THREE.CylinderGeometry(7, 7, 5, 16);
@@ -3546,6 +3740,14 @@ function updateCamera(dt) {
   }
   // Umsehen: beim Fahren federt die Kamera nach dem Loslassen zurück, zu Fuß bleibt die neue Richtung
   const looking = mouse.right || !!touch.look;
+  // Zu Fuß schwenkt die Kamera langsam hinter die Laufrichtung (nicht beim reinen Seitwärtslaufen)
+  if (!player.onScooter && !looking) {
+    const spd = Math.hypot(player.vx, player.vy);
+    if (spd > 60) {
+      const d = angDiff(camYaw, Math.atan2(player.vy, player.vx));
+      if (Math.abs(d) < 1.2) camYaw += d * Math.min(1, dt * 1.4);
+    }
+  }
   if (!looking) {
     if (player.onScooter) lookYaw *= Math.pow(0.04, dt);
     else if (lookYaw) { camYaw += lookYaw; lookYaw = 0; }
@@ -3623,6 +3825,9 @@ function render3D(dt) {
   const veh = isMoped ? mopedMesh : isCar ? carMesh : scooterMesh;
   scooterMesh.visible = kind === 'scooter'; mopedMesh.visible = isMoped; carMesh.visible = isCar;
   if (kind === 'scooter') scooterMesh.userData.accent.color.setHex(VEH[vehicle].color);
+  scooterMesh.userData.deck.color.setHex(cosmItem('deck') ? cosmItem('deck').color : 0x1d2228);
+  syncCosmetics();
+  syncGas();
   // Wheelie: um das Hinterrad drehen (Drehpunkt im Fahrzeug: xr, yr)
   const wh = isCar ? 0 : (scooter.wheelie || 0), [pxr, pyr] = isMoped ? [-20, 7] : [-15, 4];
   const rotP = (lx, ly) => [pxr + (lx - pxr) * Math.cos(wh) - (ly - pyr) * Math.sin(wh), pyr + (lx - pxr) * Math.sin(wh) + (ly - pyr) * Math.cos(wh)];
@@ -3650,7 +3855,7 @@ function render3D(dt) {
     playerMesh.userData.armL.rotation.y = 0.25 - steerVis * 0.3;
   } else {
     playerMesh.position.set(player.x, groundH(player.x, player.y), player.y);
-    posePerson(playerMesh, player.aim, player.aim, false, player.walkT, moving);
+    posePerson(playerMesh, player.face === undefined ? player.aim : player.face, player.aim, false, player.walkT, moving);
     playerMesh.rotation.x = 0; playerMesh.rotation.z = 0;
   }
   dealerMeshes.forEach((g, i) => {
