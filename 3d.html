@@ -41,7 +41,26 @@
   .item small { color: #9aa6b8; font-variant-numeric: tabular-nums; }
   .item button { font-size: 15px; padding: 9px 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .item button.buy { background: linear-gradient(90deg,#ffd166,#f0b43c); color: #2a1d00; }
-  #shopClose { background: #2a3342; color: #fff; width: 100%; }
+  #shopClose { background: #2a3342; color: #fff; width: 100%; position: sticky; bottom: 0; box-shadow: 0 -8px 16px rgba(20,24,32,.9); }
+  body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  #rules { margin-bottom: 16px; }
+  #rules summary { cursor: pointer; color: #ffd166; font-weight: 700; margin-bottom: 8px; }
+  .touch-guide { display: none; font-size: 14px; color: #cfd6e0; line-height: 1.5; margin-bottom: 14px; }
+  .touch-guide b { color: #fff; }
+  @media (pointer: coarse) {
+    .desktop-only { display: none !important; }
+    .touch-guide { display: block; }
+    #overlay .panel { display: flex; flex-direction: column; padding: 18px; }
+    #overlay .panel > * { order: 5; }
+    #overlay .panel > h1 { order: 0; font-size: clamp(26px, 7vw, 44px); }
+    #overlay .panel > .sub { order: 1; margin-bottom: 10px; }
+    #overlay .panel > .touch-guide { order: 2; }
+    #overlay .panel > .row-btns { order: 3; margin-bottom: 14px; }
+    #overlay .panel > #worldInfo { order: 4; }
+    .panel { padding: 18px; }
+    .shop h2 { font-size: 26px; }
+    .item { padding: 8px 10px; }
+  }
   .row-btns { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
   button.ghost { background: transparent; color: #9aa6b8; border: 1px solid #3a4456; font-size: 14px; padding: 10px 16px; }
   .swatches { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
@@ -66,7 +85,12 @@
   <div class="panel">
     <h1>E-SCOOTER CHASE 3D</h1>
     <p class="sub">Heiz mit deinem E-Scooter durch die Stadt – und lass dich nicht erwischen.</p>
-    <table>
+    <div class="touch-guide">
+      <b>So spielst du auf dem Handy</b> (am besten quer halten):<br>
+      Linker Daumen: fahren / laufen · Rechter Daumen: zielen, weit ziehen = schießen ·
+      Oben wischen: umsehen · Runde Tasten: Aktion (Auf/Ab, Läden, Tür), Waffe, Gang, Bremse, Pause.
+    </div>
+    <table class="desktop-only">
       <tr><td>W / ↑</td><td>Gas geben (Roller) / laufen</td></tr>
       <tr><td>S / ↓</td><td>Bremsen / rückwärts</td></tr>
       <tr><td>A D / ← →</td><td>Lenken / seitlich laufen</td></tr>
@@ -80,6 +104,7 @@
       <tr><td>Leertaste</td><td>Vollbremsung</td></tr>
       <tr><td>P / Esc &nbsp; M</td><td>Pause &nbsp;·&nbsp; Ton an/aus</td></tr>
     </table>
+    <details id="rules" open><summary>Spielregeln &amp; Tipps</summary>
     <div class="tip">
       <b>Handy:</b> Quer halten. Linker Daumen = fahren/laufen (der Roller fährt in die Stick-Richtung),
       rechter Daumen = zielen, weit ziehen = schießen. Oben über den Bildschirm wischen = umsehen.
@@ -99,9 +124,11 @@
       <b>Waffen</b> liegen überall herum – steig vom Roller ab, um sie aufzuheben.
       Bleibst du (bis 3 Sterne) stehen, während ein Polizist neben dir hält: <b>BUSTED</b>.
     </div>
+    </details>
     <div id="worldInfo" class="tip" hidden></div>
     <div class="row-btns">
       <button id="startBtn">Losfahren</button>
+      <button id="fsBtn" class="ghost touch-inline" hidden>Vollbild</button>
       <button id="resetBtn" class="ghost">Spielstand zurücksetzen</button>
     </div>
   </div>
@@ -575,19 +602,30 @@ cv.addEventListener('wheel', e => { wheel += Math.sign(e.deltaY); e.preventDefau
 let touchMode = matchMedia('(pointer: coarse)').matches;
 const touch = { move: null, aim: null, look: null, brake: false, brakeId: null };
 const STICK_R = 60;
+// Positionen der Sticks und Tasten; im Hochformat stehen die Tasten in Spalten über den Sticks
+function touchLayout() {
+  const portrait = H > W * 1.1;
+  const r = Math.max(28, Math.min(36, Math.min(W, H) * 0.08));
+  if (portrait) return {
+    portrait, r, move: [90, H - 110], aim: [W - 90, H - 110],
+    E: [W - 48, H - 250], Wp: [W - 48, H - 332], brake: [48, H - 250], gear: [48, H - 332], pause: [W / 2, H - 36],
+  };
+  const bx = W - 110 - STICK_R - r - 20, lx = 100 + STICK_R + r + 20;
+  return { portrait, r, move: [100, H - 110], aim: [W - 110, H - 110], E: [bx, H - 150], Wp: [bx, H - 62], brake: [lx, H - 62], gear: [lx, H - 150], pause: [W / 2, 30] };
+}
 function touchButtons() {
-  const r = Math.max(28, Math.min(36, W * 0.045));
-  const bx = W - 110 - STICK_R - r - 20;
+  const L = touchLayout(), r = L.r;
   return [
-    Object.assign({ id: 'TouchE', x: bx, y: H - 150, r }, ({
+    Object.assign({ id: 'TouchE', x: L.E[0], y: L.E[1], r }, ({
       door: { label: '⇡', sub: 'Tor' }, garage: { label: 'W', sub: 'Werkstatt' }, auto: { label: 'A', sub: 'Autohaus' }, dealer: { label: '$', sub: 'Dealer' },
       scooter: { label: 'S', sub: 'Laden' }, tune: { label: 'T', sub: 'Tuning' }, home: { label: '⌂', sub: 'Haus' }, atm: { label: '€', sub: 'Knacken' },
       exit: { label: '→', sub: 'Umzug' }, safe: { label: '▣', sub: 'Tresor' }, keys: { label: 'K', sub: 'Schlüssel' }, leave: { label: '⌂', sub: 'Raus' },
     })[interactCtx()] || { label: '⇅', sub: player && player.onScooter ? 'Ab' : 'Auf' }),
-    { id: 'TouchW', x: bx, y: H - 62, r: r * 0.85, label: '⟳', sub: 'Waffe' },
-    { id: 'Brake', x: 100 + STICK_R + r + 20, y: H - 62, r: r * 0.85, label: '■', sub: 'Bremse' },
-    ...(player && player.onScooter ? [{ id: 'TouchG', x: 100 + STICK_R + r + 20, y: H - 150, r: r * 0.85, label: String(curGear() + 1), sub: 'Gang' }] : []),
-    { id: 'KeyP', x: W / 2, y: 30, r: 20, label: 'II', sub: '' },
+    { id: 'TouchW', x: L.Wp[0], y: L.Wp[1], r: r * 0.85, label: '⟳', sub: 'Waffe' },
+    ...(player && player.onScooter ? [
+      { id: 'Brake', x: L.brake[0], y: L.brake[1], r: r * 0.85, label: '■', sub: 'Bremse' },
+      { id: 'TouchG', x: L.gear[0], y: L.gear[1], r: r * 0.85, label: String(curGear() + 1), sub: 'Gang' }] : []),
+    { id: 'KeyP', x: L.pause[0], y: L.pause[1], r: 20, label: 'II', sub: '' },
   ];
 }
 function stickVec(st) {
@@ -655,10 +693,11 @@ function drawTouchControls() {
     ctx.fillStyle = col; ctx.beginPath(); ctx.arc(kx, ky, 24, 0, TAU); ctx.fill();
     ctx.globalAlpha = 1;
   };
-  stick(touch.move, '#3dd68c', 100, H - 110);
+  const TL = touchLayout();
+  stick(touch.move, '#3dd68c', TL.move[0], TL.move[1]);
   if (WEAPONS[player.weapon].dmg) {
-    stick(touch.aim, '#ff6b6b', W - 110, H - 110);
-    if (!touch.aim) { ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.font = 'bold 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Zielen + Feuer', W - 110, H - 110 - STICK_R - 12); }
+    stick(touch.aim, '#ff6b6b', TL.aim[0], TL.aim[1]);
+    if (!touch.aim) { ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.font = 'bold 11px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Zielen + Feuer', TL.aim[0], TL.aim[1] - STICK_R - 12); }
   }
   for (const b of touchButtons()) {
     ctx.fillStyle = (b.id === 'Brake' && touch.brake) ? 'rgba(255,209,102,.6)' : 'rgba(0,0,0,.45)';
@@ -696,6 +735,20 @@ function drawTouchControls() {
     'Die <b>Werkstatt</b> (W) tunt Roller. Deine <b>Wohnung</b> (⌂) ist in Downtown: Nur ohne Sterne und zu Fuß kommst du rein; drinnen lagerst du Waffen im Tresor und wählst am Schlüsselbrett dein Fahrzeug.';
   document.getElementById('startBtn').textContent = fresh ? 'Raus in die Stadt' : 'Losgehen';
 })();
+const COARSE = matchMedia('(pointer: coarse)').matches;
+if (COARSE) document.getElementById('rules').open = false;
+// Vollbild (und auf Android Querformat) – klappt nicht in jeder App-Ansicht, dann bleibt alles wie es ist
+function goFullscreen() {
+  const el = document.documentElement, req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!req) return;
+  try {
+    const pr = req.call(el);
+    if (pr && pr.then) pr.then(() => { try { screen.orientation.lock('landscape').catch(() => {}); } catch (e) {} }).catch(() => {});
+  } catch (e) {}
+}
+const fsBtn = document.getElementById('fsBtn');
+if (COARSE && (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)) fsBtn.hidden = false;
+fsBtn.addEventListener('click', goFullscreen);
 const resetBtn = document.getElementById('resetBtn');
 resetBtn.addEventListener('click', () => {
   if (!resetBtn.dataset.sure) { resetBtn.dataset.sure = '1'; resetBtn.textContent = 'Wirklich alles löschen? Nochmal klicken'; return; }
@@ -708,6 +761,7 @@ document.getElementById('cutBtn').addEventListener('click', () => finishMove());
 document.getElementById('startBtn').addEventListener('click', () => {
   Snd.init();
   document.getElementById('overlay').style.display = 'none';
+  if (COARSE) goFullscreen();
   const fresh = BIG && load('fresh', false);
   newGame(fresh);
   if (fresh) {
@@ -2370,24 +2424,27 @@ function drawHUD() {
 
   // Waffe
   const w = WEAPONS[player.weapon];
-  ctx.fillStyle = 'rgba(0,0,0,.55)'; rrect(W - 226, 94, 210, 54, 8); ctx.fill();
-  drawGunIcon(player.weapon, W - 196, 121, 1.1, '#fff');
+  // Auf schmalen Bildschirmen (Handy hochkant) ist die Waffen-Anzeige kompakter
+  const narrow = W < 480, wpX = narrow ? W - 190 : W - 226, wpW = narrow ? 174 : 210, wpS = narrow ? 28 : 34;
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; rrect(wpX, 94, wpW, 54, 8); ctx.fill();
+  drawGunIcon(player.weapon, wpX + 30, 121, narrow ? 0.9 : 1.1, '#fff');
   ctx.fillStyle = '#fff'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   ctx.font = 'bold 14px system-ui, sans-serif'; ctx.fillText(w.name, W - 26, 111);
   ctx.font = 'bold 20px Impact, Arial Black, sans-serif'; ctx.fillStyle = '#ffd166';
   ctx.fillText(player.weapon === 'fists' ? '—' : String(player.ammo[player.weapon]), W - 26, 132);
   // Inventar-Leiste
-  let ix = W - 226;
+  let ix = wpX;
   ctx.font = '10px system-ui, sans-serif'; ctx.textAlign = 'center';
   WEAPON_ORDER.forEach((id, i) => {
     const owned = player.ammo[id] !== undefined;
     ctx.fillStyle = id === player.weapon ? '#ffd166' : owned ? 'rgba(255,255,255,.6)' : 'rgba(255,255,255,.15)';
-    ctx.fillText(String(i + 1), ix + 20 + i * 34, 158);
+    ctx.fillText(String(i + 1), ix + 20 + i * wpS, 158);
   });
 
   // Tacho
   if (player.onScooter) {
-    const ty = touchMode ? 6 : H - 70, tx = touchMode ? W / 2 + 150 : W;
+    const portraitHud = touchMode && H > W * 1.1;
+    const ty = portraitHud ? ms + 48 : touchMode ? 6 : H - 70, tx = portraitHud ? 202 : touchMode ? W / 2 + 150 : W;
     ctx.fillStyle = 'rgba(0,0,0,.55)'; rrect(tx - 186, ty, 170, 54, 8); ctx.fill();
     // Gang-Anzeige
     const gs = gearsOf(), g = curGear();
@@ -2430,12 +2487,17 @@ function drawHUD() {
     ctx.fillStyle = '#fff'; ctx.fillText(hint, W / 2, hy);
   }
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = 'bold 14px system-ui, sans-serif';
-  const toastY = touchMode ? ms + 60 : 16;
+  const toastY = touchMode ? (H > W * 1.1 && player.onScooter ? ms + 112 : ms + 60) : 16;
   toasts.forEach((t, i) => {
     ctx.globalAlpha = Math.min(1, t.t * 2);
-    const tw = ctx.measureText(t.text).width;
+    // Zu lange Meldungen passend kürzen, damit nichts am Rand abgeschnitten wird
+    let text = t.text;
+    ctx.font = `bold ${touchMode ? 12 : 14}px system-ui, sans-serif`;
+    while (ctx.measureText(text).width > W - 56 && text.length > 8) text = text.slice(0, -2);
+    if (text !== t.text) text = text.trimEnd() + '…';
+    const tw = ctx.measureText(text).width;
     ctx.fillStyle = 'rgba(0,0,0,.6)'; rrect(16, toastY + i * 34, tw + 20, 28, 6); ctx.fill();
-    ctx.fillStyle = t.color; ctx.fillText(t.text, 26, toastY + 14 + i * 34);
+    ctx.fillStyle = t.color; ctx.fillText(text, 26, toastY + 14 + i * 34);
   });
   ctx.globalAlpha = 1;
   if (bigMsg) {
@@ -2484,7 +2546,7 @@ function drawHUD() {
 // ====================================================================
 const LOW_GFX = matchMedia('(pointer: coarse)').matches;
 const renderer = new THREE.WebGLRenderer({ antialias: !LOW_GFX, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, LOW_GFX ? 1.5 : 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, LOW_GFX ? 1.25 : 2));
 renderer.setSize(W, H);
 renderer.shadowMap.enabled = !LOW_GFX;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -2493,7 +2555,7 @@ document.getElementById('gl').appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 const HAZE = 0xf1d9bd;
 scene.background = new THREE.Color(HAZE);
-scene.fog = new THREE.Fog(HAZE, 1000, 2700);
+scene.fog = LOW_GFX ? new THREE.Fog(HAZE, 700, 2000) : new THREE.Fog(HAZE, 1000, 2700);
 const skyDome = new THREE.Mesh(new THREE.SphereGeometry(2900, 32, 16), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false,
   uniforms: { top: { value: new THREE.Color(0x3f7fcf) }, mid: { value: new THREE.Color(0x9cc3ea) }, bottom: { value: new THREE.Color(HAZE) }, sunDir: { value: new THREE.Vector3(0.55, 0.42, 0.72).normalize() } },
@@ -3523,7 +3585,7 @@ function render3D(dt) {
   for (const d of showItems) d.rotation.y = time * 0.5;
   syncGarages();
   syncCity();
-  for (const m of buildingMeshes) m.visible = Math.hypot(m.position.x - cam.x, m.position.z - cam.y) < 3000 + m.userData.r;
+  for (const m of buildingMeshes) m.visible = Math.hypot(m.position.x - cam.x, m.position.z - cam.y) < (LOW_GFX ? 2100 : 3000) + m.userData.r;
   const moving = Math.hypot(player.vx, player.vy) > 10;
   if (player.onScooter) {
     // Fahrer neigt sich mit dem Roller in die Kurve
