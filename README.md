@@ -20,6 +20,7 @@ Nur in der 3D-Version:
 - **Anfahren** mit dem Roller (oder durch Polizeiautos) → Ragdoll, nach 2 Sekunden stehen sie wieder auf. **Erschießen** kostet 50 $ pro Passant und gibt sofort einen Stern.
 - **Tankstellen** (G auf der Karte, 1 in der Kleinstadt, 3 in der Großstadt): Essen stellt Gesundheit wieder her (Wasser, Sandwich, Pizza, Burger-Menü), Kosmetik (Caps, Helm, Sonnenbrille, Jacken, Rucksack, Roller-Folien) und mit Waffe die Kasse ausrauben (300–650 $, danach 2 Sterne).
 - **Laufen:** Die Figur schaut in Laufrichtung (mit gezogener Waffe zum Ziel), die Kamera schwenkt mit, Umschalt = rennen.
+- **Pausenmenü (P / Esc):** Zahl ins Feld „Geld hinzufügen“ eingeben und bestätigen – sie wird zu deinem Geld addiert.
 - **Wheelie:** Umschalt (Shift) halten, Roller und Moped ab etwas Tempo (Handy: Taste ↥ halten).
 - **Driften:** Leertaste/Bremse halten und dabei lenken, wenn du schnell genug bist – mit Reifenquietschen und Rauch.
 - **Gangschaltung:** Während der Fahrt mit **Q** schalten (Handy: Zahl-Taste über der Bremse). Roller 3 Gänge, E-Moped 4. Niedrige Gänge ziehen stärker, für die Höchstgeschwindigkeit musst du hochschalten; beim Runterschalten bremst der Motor. Zu Fuß wechselt Q weiterhin die Waffe.

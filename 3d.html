@@ -41,6 +41,15 @@
   .item small { color: #9aa6b8; font-variant-numeric: tabular-nums; }
   .item button { font-size: 15px; padding: 9px 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .item button.buy { background: linear-gradient(90deg,#ffd166,#f0b43c); color: #2a1d00; }
+  #pausePanel { position: fixed; left: 0; right: 0; bottom: 0; display: flex; justify-content: center; z-index: 9; padding: 16px; box-sizing: border-box; }
+  .panel.mini { max-width: 360px; padding: 16px 18px; }
+  #moneyForm label { display: block; font-weight: 700; color: #7ee08a; margin-bottom: 8px; }
+  .money-row { display: flex; gap: 8px; }
+  #moneyInput { flex: 1; min-width: 0; font: inherit; font-size: 18px; padding: 10px 12px; border-radius: 10px; border: 1px solid #3a4456;
+    background: #0e1218; color: #fff; -webkit-user-select: text; user-select: text; }
+  #moneyInput:focus { outline: 2px solid #7ee08a; outline-offset: 1px; }
+  #moneyForm button { font-size: 16px; padding: 10px 16px; }
+  #moneyNote { margin: 8px 0 0; font-size: 13px; color: #9aa6b8; min-height: 1em; }
   .sec { margin: 6px 2px 0; font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #9aa6b8; }
   .item b .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.4); }
   .item button.warn { background: linear-gradient(90deg,#ff6b6b,#d63c3c); color: #2a0606; }
@@ -137,6 +146,16 @@
       <button id="resetBtn" class="ghost">Spielstand zurücksetzen</button>
     </div>
   </div>
+</div>
+<div id="pausePanel" hidden>
+  <form id="moneyForm" class="panel mini">
+    <label for="moneyInput">Geld hinzufügen</label>
+    <div class="money-row">
+      <input id="moneyInput" type="number" inputmode="numeric" step="1" placeholder="z. B. 5000" autocomplete="off">
+      <button type="submit">Addieren</button>
+    </div>
+    <p id="moneyNote"></p>
+  </form>
 </div>
 <div id="cutscene" hidden>
   <div class="panel cut">
@@ -597,6 +616,7 @@ const keys = {}, pressed = {};
 const mouse = { x: 0, y: 0, down: false };
 let wheel = 0;
 addEventListener('keydown', e => {
+  if (e.target && e.target.tagName === 'INPUT') { if (e.code === 'Escape') e.target.blur(); return; }
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
   keys[e.code] = true;
   if (!e.repeat) pressed[e.code] = true;
@@ -769,6 +789,17 @@ function goFullscreen() {
 const fsBtn = document.getElementById('fsBtn');
 if (COARSE && (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)) fsBtn.hidden = false;
 fsBtn.addEventListener('click', goFullscreen);
+// Pausenmenü: eingegebene Zahl wird zum aktuellen Geld addiert
+const pausePanel = document.getElementById('pausePanel'), moneyInput = document.getElementById('moneyInput'), moneyNote = document.getElementById('moneyNote');
+document.getElementById('moneyForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const n = Math.trunc(Number(moneyInput.value));
+  if (!moneyInput.value.trim() || !Number.isFinite(n)) { moneyNote.textContent = 'Bitte eine Zahl eingeben.'; return; }
+  const add = clamp(n, -1e9, 1e9);
+  addMoney(add);
+  moneyNote.textContent = `${add >= 0 ? '+' : '−'}${fmtMoney(Math.abs(add))} · Du hast jetzt ${fmtMoney(money)}.`;
+  moneyInput.value = '';
+});
 const resetBtn = document.getElementById('resetBtn');
 resetBtn.addEventListener('click', () => {
   if (!resetBtn.dataset.sure) { resetBtn.dataset.sure = '1'; resetBtn.textContent = 'Wirklich alles löschen? Nochmal klicken'; return; }
@@ -2350,6 +2381,8 @@ function frame(now) {
       if (fee > 0) { addMoney(-fee); toast((k === 'busted' ? 'Kaution: −' : 'Krankenhausrechnung: −') + fmtMoney(fee), '#ff6b6b'); }
     }
   }
+  const showPause = state === 'paused';
+  if (pausePanel.hidden === showPause) { pausePanel.hidden = !showPause; if (!showPause) moneyInput.blur(); }
   Snd.update(dt);
   render(dt);
   for (const k in pressed) pressed[k] = false;
@@ -2663,8 +2696,8 @@ function drawHUD() {
   // Overlays
   if (state === 'paused') {
     ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '56px Impact, Arial Black, sans-serif'; ctx.fillText('PAUSE', W / 2, H / 2);
-    ctx.font = '16px system-ui, sans-serif'; ctx.fillText(touchMode ? 'Tippen zum Weiterspielen' : 'P oder Esc zum Weiterspielen · M: Ton ' + (Snd.muted ? 'an' : 'aus'), W / 2, H / 2 + 44);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.font = '56px Impact, Arial Black, sans-serif'; ctx.fillText('PAUSE', W / 2, H * 0.32);
+    ctx.font = '16px system-ui, sans-serif'; ctx.fillText(touchMode ? 'Tippen zum Weiterspielen' : 'P oder Esc zum Weiterspielen · M: Ton ' + (Snd.muted ? 'an' : 'aus'), W / 2, H * 0.32 + 44);
   }
   if (state === 'wasted' || state === 'busted') {
     const a = Math.min(1, endTimer / 1.2);
